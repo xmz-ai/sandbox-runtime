@@ -573,6 +573,8 @@ async function generateAllowOnlyFilesystemArgs(
   writeConfig: FsWriteRestrictionConfig | undefined,
   seccompFilterPath?: string,
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
+  mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
+  abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const args: string[] = []
 
@@ -602,7 +604,7 @@ async function generateAllowOnlyFilesystemArgs(
     const applySeccompBinary = getApplySeccompBinaryPath()
     if (applySeccompBinary) {
       // Get the directory containing apply-seccomp (e.g., /path/to/vendor/seccomp/arm64)
-      const applySeccompDir = dirname(applySeccompBinary)
+      const applySeccompDir = path.dirname(applySeccompBinary)
       if (fs.existsSync(applySeccompDir)) {
         args.push('--ro-bind', applySeccompDir, applySeccompDir)
         logForDebugging(
@@ -612,7 +614,7 @@ async function generateAllowOnlyFilesystemArgs(
     }
 
     // Also bind the BPF filter directory if different
-    const filterDir = dirname(seccompFilterPath)
+    const filterDir = path.dirname(seccompFilterPath)
     if (fs.existsSync(filterDir)) {
       args.push('--ro-bind', filterDir, filterDir)
       logForDebugging(
@@ -680,7 +682,11 @@ async function generateAllowOnlyFilesystemArgs(
     // Collect all paths that should be denied for writes (user-specified + mandatory)
     const denyPathsForWrite = [
       ...(writeConfig.denyWithinAllow || []),
-      ...(await getMandatoryDenyWithinAllow(ripgrepConfig)),
+      ...(await linuxGetMandatoryDenyPaths(
+        ripgrepConfig,
+        mandatoryDenySearchDepth,
+        abortSignal,
+      )),
     ]
 
     // Build list of allowed write paths for checking
@@ -760,6 +766,8 @@ async function generateFilesystemArgs(
   writeConfig: FsWriteRestrictionConfig | undefined,
   seccompFilterPath?: string,
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
+  mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
+  abortSignal?: AbortSignal,
 ): Promise<string[]> {
   // Dispatch to appropriate implementation based on read config mode
   if (readConfig?.mode === 'deny-only') {
@@ -768,6 +776,8 @@ async function generateFilesystemArgs(
       readConfig.denyPaths,
       writeConfig,
       ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
     )
   } else if (readConfig?.mode === 'allow-only') {
     // Use allow-only implementation (new logic)
@@ -777,6 +787,8 @@ async function generateFilesystemArgs(
       writeConfig,
       seccompFilterPath,
       ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
     )
   } else {
     // No read restrictions: mount entire / (respecting write restrictions if any)

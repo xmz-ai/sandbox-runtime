@@ -422,7 +422,7 @@ describe('restriction pattern semantics', () => {
         needsNetworkRestriction: true,
         httpSocketPath: undefined, // No proxy available
         socksSocketPath: undefined, // No proxy available
-        readConfig: { denyOnly: [] },
+        readConfig: { mode: 'deny-only', denyPaths: [] },
         writeConfig: { allowOnly: ['/tmp'], denyWithinAllow: [] },
       })
 
@@ -445,7 +445,7 @@ describe('restriction pattern semantics', () => {
         needsNetworkRestriction: true,
         httpProxyPort: undefined, // No proxy available
         socksProxyPort: undefined, // No proxy available
-        readConfig: { denyOnly: [] },
+        readConfig: { mode: 'deny-only', denyPaths: [] },
         writeConfig: { allowOnly: ['/tmp'], denyWithinAllow: [] },
       })
 
@@ -481,7 +481,7 @@ describe('restriction pattern semantics', () => {
           socksSocketPath: socksSocket,
           httpProxyPort: 3128,
           socksProxyPort: 1080,
-          readConfig: { denyOnly: [] },
+          readConfig: { mode: 'deny-only', denyPaths: [] },
           writeConfig: { allowOnly: ['/tmp'], denyWithinAllow: [] },
         })
 
@@ -509,7 +509,7 @@ describe('restriction pattern semantics', () => {
         needsNetworkRestriction: true,
         httpProxyPort: 3128,
         socksProxyPort: 1080,
-        readConfig: { denyOnly: [] },
+        readConfig: { mode: 'deny-only', denyPaths: [] },
         writeConfig: { allowOnly: ['/tmp'], denyWithinAllow: [] },
       })
 
