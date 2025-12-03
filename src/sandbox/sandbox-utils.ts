@@ -46,6 +46,8 @@ export const RESERVED_ENV_VARS = new Set([
   'CLOUDSDK_PROXY_PORT',
   'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
   'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+  'GLOBAL_AGENT_HTTP_PROXY',
+  'GLOBAL_AGENT_NO_PROXY',
   'SANDBOX_RUNTIME',
   'TMPDIR',
 ])
@@ -190,6 +192,7 @@ export function generateProxyEnvVars(
   ].join(',')
   envVars.push(`NO_PROXY=${noProxyAddresses}`)
   envVars.push(`no_proxy=${noProxyAddresses}`)
+  envVars.push(`GLOBAL_AGENT_NO_PROXY=${noProxyAddresses}`)
 
   if (httpProxyPort) {
     envVars.push(`HTTP_PROXY=http://localhost:${httpProxyPort}`)
@@ -197,6 +200,7 @@ export function generateProxyEnvVars(
     // Lowercase versions for compatibility with some tools
     envVars.push(`http_proxy=http://localhost:${httpProxyPort}`)
     envVars.push(`https_proxy=http://localhost:${httpProxyPort}`)
+    envVars.push(`GLOBAL_AGENT_HTTP_PROXY=http://localhost:${httpProxyPort}`)
   }
 
   if (socksProxyPort) {
