@@ -516,6 +516,35 @@ function getMandatoryDenySearchDepth(): number {
   return config?.mandatoryDenySearchDepth ?? 3
 }
 
+/**
+ * Get resolved environment variables configuration
+ * Resolves inherited values from host environment
+ * @returns Array of { name, value } pairs with all values resolved
+ */
+function getResolvedEnvVars(): Array<{ name: string; value: string }> {
+  if (!config?.env) {
+    return []
+  }
+
+  const resolved: Array<{ name: string; value: string }> = []
+
+  for (const [name, configValue] of Object.entries(config.env)) {
+    let value: string | undefined
+
+    if (configValue === null) {
+      value = process.env[name]
+    } else {
+      value = configValue
+    }
+
+    if (value !== undefined) {
+      resolved.push({ name, value })
+    }
+  }
+
+  return resolved
+}
+
 function getProxyPort(): number | undefined {
   return managerContext?.httpProxyPort
 }
@@ -607,6 +636,7 @@ async function wrapWithSandbox(
         allowLocalBinding: getAllowLocalBinding(),
         ignoreViolations: getIgnoreViolations(),
         binShell,
+        envVars: getResolvedEnvVars(),
       })
 
     case 'linux':
@@ -634,6 +664,7 @@ async function wrapWithSandbox(
         ripgrepConfig: getRipgrepConfig(),
         mandatoryDenySearchDepth: getMandatoryDenySearchDepth(),
         abortSignal,
+        envVars: getResolvedEnvVars(),
       })
 
     default:

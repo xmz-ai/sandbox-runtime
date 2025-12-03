@@ -13,6 +13,7 @@ import {
   normalizeCaseForComparison,
   DANGEROUS_FILES,
   getDangerousDirectories,
+  RESERVED_ENV_VARS,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -51,6 +52,8 @@ export interface LinuxSandboxParams {
   mandatoryDenySearchDepth?: number
   /** Abort signal to cancel the ripgrep scan */
   abortSignal?: AbortSignal
+  /** Custom environment variables to set in the sandbox */
+  envVars?: Array<{ name: string; value: string }>
 }
 
 /** Default max depth for searching dangerous files */
@@ -1011,6 +1014,28 @@ export async function wrapCommandWithSandboxLinux(
         }
       }
       // If no sockets provided, network is completely blocked (--unshare-net without proxy)
+    }
+
+    // ========== CUSTOM ENVIRONMENT VARIABLES ==========
+    if (params.envVars && params.envVars.length > 0) {
+      for (const { name, value } of params.envVars) {
+        if (RESERVED_ENV_VARS.has(name.toUpperCase())) {
+          logForDebugging(
+            `[Sandbox Linux] Skipping reserved environment variable: ${name}`,
+            { level: 'warn' },
+          )
+          continue
+        }
+        bwrapArgs.push('--setenv', name, value)
+      }
+      const addedCount = params.envVars.filter(
+        v => !RESERVED_ENV_VARS.has(v.name.toUpperCase()),
+      ).length
+      if (addedCount > 0) {
+        logForDebugging(
+          `[Sandbox Linux] Added ${addedCount} custom environment variable(s)`,
+        )
+      }
     }
 
     // ========== FILESYSTEM RESTRICTIONS ==========

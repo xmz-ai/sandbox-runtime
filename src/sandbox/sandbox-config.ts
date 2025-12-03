@@ -166,6 +166,19 @@ export const RipgrepConfigSchema = z.object({
 })
 
 /**
+ * Environment variables configuration schema
+ * - String values: set the environment variable to that value
+ * - null values: inherit from host environment (process.env)
+ */
+export const EnvConfigSchema = z
+  .record(z.string(), z.string().nullable())
+  .optional()
+  .describe(
+    'Custom environment variables to set in sandboxed processes. ' +
+      'Keys are variable names, values can be strings (explicit value) or null (inherit from host).',
+  )
+
+/**
  * Main configuration schema for Sandbox Runtime validation
  */
 export const SandboxRuntimeConfigSchema = z.object({
@@ -193,6 +206,9 @@ export const SandboxRuntimeConfigSchema = z.object({
       'Maximum directory depth to search for dangerous files on Linux (default: 3). ' +
         'Higher values provide more protection but slower performance.',
     ),
+  env: EnvConfigSchema.describe(
+    'Custom environment variables for sandboxed processes',
+  ),
 })
 
 // Export inferred types
@@ -202,4 +218,5 @@ export type IgnoreViolationsConfig = z.infer<
   typeof IgnoreViolationsConfigSchema
 >
 export type RipgrepConfig = z.infer<typeof RipgrepConfigSchema>
+export type EnvConfig = z.infer<typeof EnvConfigSchema>
 export type SandboxRuntimeConfig = z.infer<typeof SandboxRuntimeConfigSchema>

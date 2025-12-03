@@ -10,6 +10,7 @@ import {
   containsGlobChars,
   DANGEROUS_FILES,
   getDangerousDirectories,
+  RESERVED_ENV_VARS,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -29,6 +30,8 @@ export interface MacOSSandboxParams {
   writeConfig: FsWriteRestrictionConfig | undefined
   ignoreViolations?: IgnoreViolationsConfig | undefined
   binShell?: string
+  /** Custom environment variables to set in the sandbox */
+  envVars?: Array<{ name: string; value: string }>
 }
 
 /**
@@ -674,7 +677,33 @@ export function wrapCommandWithSandboxMacOS(
   })
 
   // Generate proxy environment variables using shared utility
-  const proxyEnv = `export ${generateProxyEnvVars(httpProxyPort, socksProxyPort).join(' ')} && `
+  const proxyEnvVars = generateProxyEnvVars(httpProxyPort, socksProxyPort)
+
+  // Add custom environment variables (with reserved var filtering)
+  const customEnvVars: string[] = []
+  if (params.envVars && params.envVars.length > 0) {
+    for (const { name, value } of params.envVars) {
+      if (RESERVED_ENV_VARS.has(name.toUpperCase())) {
+        logForDebugging(
+          `[Sandbox macOS] Skipping reserved environment variable: ${name}`,
+          { level: 'warn' },
+        )
+        continue
+      }
+      // Shell-escape the value for safety
+      const escapedValue = value.replace(/'/g, "'\\''")
+      customEnvVars.push(`${name}='${escapedValue}'`)
+    }
+    if (customEnvVars.length > 0) {
+      logForDebugging(
+        `[Sandbox macOS] Added ${customEnvVars.length} custom environment variable(s)`,
+      )
+    }
+  }
+
+  const allEnvVars = [...proxyEnvVars, ...customEnvVars]
+  const proxyEnv =
+    allEnvVars.length > 0 ? `export ${allEnvVars.join(' ')} && ` : ''
 
   // Use the user's shell (zsh, bash, etc.) to ensure aliases/snapshots work
   // Resolve the full path to the shell binary

@@ -26,6 +26,31 @@ export const DANGEROUS_FILES = [
 export const DANGEROUS_DIRECTORIES = ['.git', '.vscode', '.idea'] as const
 
 /**
+ * Environment variables reserved by sandbox-runtime
+ * These cannot be overridden by user configuration
+ * Note: Matching is case-insensitive (names are uppercased before checking)
+ */
+export const RESERVED_ENV_VARS = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'FTP_PROXY',
+  'GRPC_PROXY',
+  'RSYNC_PROXY',
+  'GIT_SSH_COMMAND',
+  'DOCKER_HTTP_PROXY',
+  'DOCKER_HTTPS_PROXY',
+  'CLOUDSDK_PROXY_TYPE',
+  'CLOUDSDK_PROXY_ADDRESS',
+  'CLOUDSDK_PROXY_PORT',
+  'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+  'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+  'SANDBOX_RUNTIME',
+  'TMPDIR',
+])
+
+/**
  * Get the list of dangerous directories to deny writes to.
  * Excludes .git since we need it writable for git operations -
  * instead we block specific paths within .git (hooks and config).
@@ -144,7 +169,7 @@ export function generateProxyEnvVars(
   httpProxyPort?: number,
   socksProxyPort?: number,
 ): string[] {
-  const envVars: string[] = [`SANDBOX_RUNTIME=1`, `TMPDIR=/tmp/claude`]
+  const envVars: string[] = [`SANDBOX_RUNTIME=1`, `TMPDIR=/tmp/xmz-ai-sandbox`]
 
   // If no proxy ports provided, return minimal env vars
   if (!httpProxyPort && !socksProxyPort) {
