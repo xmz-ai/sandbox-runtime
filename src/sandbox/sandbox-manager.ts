@@ -23,7 +23,6 @@ import {
   startMacOSSandboxLogMonitor,
 } from './macos-sandbox-utils.js'
 import {
-  getDefaultWritePaths,
   containsGlobChars,
   removeTrailingGlobSuffix,
   getDefaultSystemReadPaths,
@@ -442,7 +441,7 @@ function getFsReadConfig(): FsReadRestrictionConfig | undefined {
 
 function getFsWriteConfig(): FsWriteRestrictionConfig {
   if (!config) {
-    return { allowOnly: getDefaultWritePaths(), denyWithinAllow: [] }
+    return { allowOnly: [], denyWithinAllow: [] }
   }
 
   // Filter out glob patterns on Linux for allowWrite
@@ -467,8 +466,7 @@ function getFsWriteConfig(): FsWriteRestrictionConfig {
       return true
     })
 
-  // Build allowOnly list: default paths + configured allow paths
-  const allowOnly = [...getDefaultWritePaths(), ...allowPaths]
+  const allowOnly = allowPaths
 
   return {
     allowOnly,

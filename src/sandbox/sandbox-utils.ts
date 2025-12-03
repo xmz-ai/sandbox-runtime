@@ -123,6 +123,10 @@ export function normalizePathForSandbox(pathPattern: string): string {
     return normalizedPath
   }
 
+  if (normalizedPath.startsWith('/dev/')) {
+    return normalizedPath
+  }
+
   // Resolve symlinks to real paths to avoid bwrap issues
   try {
     normalizedPath = fs.realpathSync(normalizedPath)
@@ -131,31 +135,6 @@ export function normalizePathForSandbox(pathPattern: string): string {
   }
 
   return normalizedPath
-}
-
-/**
- * Get recommended system paths that should be writable for commands to work properly
- *
- * WARNING: These default paths are intentionally broad for compatibility but may
- * allow access to files from other processes. In highly security-sensitive
- * environments, you should configure more restrictive write paths.
- */
-export function getDefaultWritePaths(): string[] {
-  const homeDir = homedir()
-  const recommendedPaths = [
-    '/dev/stdout',
-    '/dev/stderr',
-    '/dev/null',
-    '/dev/tty',
-    '/dev/dtracehelper',
-    '/dev/autofs_nowait',
-    '/tmp/claude',
-    '/private/tmp/claude',
-    path.join(homeDir, '.npm/_logs'),
-    path.join(homeDir, '.claude/debug'),
-  ]
-
-  return recommendedPaths
 }
 
 /**

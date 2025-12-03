@@ -69,6 +69,7 @@ function getDefaultConfig(): SandboxRuntimeConfig {
     },
     filesystem: {
       denyRead: [],
+      allowRead: [],
       allowWrite: [],
       denyWrite: [],
       autoAllowSystemPaths: true,

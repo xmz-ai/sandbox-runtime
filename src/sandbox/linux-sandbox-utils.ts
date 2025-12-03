@@ -1102,6 +1102,8 @@ export async function wrapCommandWithSandboxLinux(
       `[Sandbox Linux] Wrapped command with bwrap (${restrictions.join(', ')} restrictions)`,
     )
 
+    logForDebugging(`[Sandbox Linux] Final wrapped command: ${wrappedCommand}`)
+
     return wrappedCommand
   } catch (error) {
     // Clean up seccomp filter on error

@@ -116,6 +116,7 @@ export const FilesystemConfigSchema = z.object({
   allowRead: z
     .array(filesystemPathSchema)
     .optional()
+    .default([])
     .describe(
       'Paths allowed for reading (allow-only mode). System paths are auto-included. ' +
         'Use denyRead to block specific paths within allowed paths.',
@@ -129,9 +130,13 @@ export const FilesystemConfigSchema = z.object({
     ),
   allowWrite: z
     .array(filesystemPathSchema)
+    .optional()
+    .default([])
     .describe('Paths allowed for writing'),
   denyWrite: z
     .array(filesystemPathSchema)
+    .optional()
+    .default([])
     .describe('Paths denied for writing (takes precedence over allowWrite)'),
 })
 
