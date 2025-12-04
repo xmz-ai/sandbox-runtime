@@ -720,16 +720,7 @@ async function generateAllowOnlyFilesystemArgs(
         continue
       }
 
-      if (!fs.existsSync(normalizedPath)) {
-        // For non-existent paths within allowed write directories,
-        // create a placeholder to prevent writes
-        logForDebugging(
-          `[Sandbox Linux] Creating placeholder for non-existent write-deny path: ${normalizedPath}`,
-        )
-        // Bind /dev/null to this path to prevent writes
-        args.push('--ro-bind', '/dev/null', normalizedPath)
-      } else {
-        // Path exists - make it read-only
+      if (fs.existsSync(normalizedPath)) {
         args.push('--ro-bind', normalizedPath, normalizedPath)
         logForDebugging(
           `[Sandbox Linux] Applied read-only bind for write-deny path: ${normalizedPath}`,
