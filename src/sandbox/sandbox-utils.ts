@@ -284,6 +284,59 @@ export function decodeSandboxedCommand(encodedCommand: string): string {
 }
 
 /**
+ * Check if a hostname matches a domain pattern.
+ * Supports wildcard patterns like *.example.com
+ *
+ * @param hostname The hostname to check
+ * @param pattern The domain pattern (supports wildcards like *.example.com)
+ * @returns true if hostname matches the pattern
+ *
+ * @example
+ * matchesDomainPattern('api.example.com', '*.example.com') // true
+ * matchesDomainPattern('example.com', '*.example.com') // false (wildcard doesn't match base domain)
+ * matchesDomainPattern('example.com', 'example.com') // true (exact match)
+ */
+export function matchesDomainPattern(
+  hostname: string,
+  pattern: string,
+): boolean {
+  // Support wildcard patterns like *.example.com
+  // This matches any subdomain but not the base domain itself
+  if (pattern.startsWith('*.')) {
+    const baseDomain = pattern.substring(2) // Remove '*.'
+    return hostname.toLowerCase().endsWith('.' + baseDomain.toLowerCase())
+  }
+
+  // Exact match for non-wildcard patterns
+  return hostname.toLowerCase() === pattern.toLowerCase()
+}
+
+/**
+ * Normalize and filter paths for sandbox configuration.
+ * Removes trailing glob suffixes and filters out unsupported glob patterns on Linux.
+ *
+ * @param paths The paths to normalize and filter
+ * @param platform The platform to normalize for
+ * @returns Normalized and filtered paths
+ */
+export function normalizeAndFilterPaths(
+  paths: string[],
+  platform: 'macos' | 'linux' | 'unknown',
+): string[] {
+  return paths
+    ? paths
+        .map(path => removeTrailingGlobSuffix(path))
+        .filter(path => {
+          if (platform === 'linux' && containsGlobChars(path)) {
+            // Skip glob patterns on Linux as they're not fully supported
+            return false
+          }
+          return true
+        })
+    : []
+}
+
+/**
  * Get system paths that must be readable for commands to execute in allow-only mode.
  * These paths contain system binaries, libraries, and essential runtime files.
  *

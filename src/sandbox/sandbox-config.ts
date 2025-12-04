@@ -106,7 +106,6 @@ export const FilesystemConfigSchema = z.object({
   denyRead: z
     .array(filesystemPathSchema)
     .optional()
-    .default([])
     .describe(
       'Paths denied for reading. Semantics depend on mode: ' +
         '(1) Without allowRead (deny-only mode): Globally deny reading these paths. ' +
@@ -116,7 +115,6 @@ export const FilesystemConfigSchema = z.object({
   allowRead: z
     .array(filesystemPathSchema)
     .optional()
-    .default([])
     .describe(
       'Paths allowed for reading (allow-only mode). System paths are auto-included. ' +
         'Use denyRead to block specific paths within allowed paths.',
@@ -124,19 +122,16 @@ export const FilesystemConfigSchema = z.object({
   autoAllowSystemPaths: z
     .boolean()
     .optional()
-    .default(true)
     .describe(
       'When using allowRead, automatically include system paths (/usr, /bin, etc.) for command execution. Default: true.',
     ),
   allowWrite: z
     .array(filesystemPathSchema)
     .optional()
-    .default([])
     .describe('Paths allowed for writing'),
   denyWrite: z
     .array(filesystemPathSchema)
     .optional()
-    .default([])
     .describe('Paths denied for writing (takes precedence over allowWrite)'),
 })
 

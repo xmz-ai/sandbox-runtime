@@ -26,6 +26,8 @@ import {
   containsGlobChars,
   removeTrailingGlobSuffix,
   getDefaultSystemReadPaths,
+  normalizeAndFilterPaths,
+  matchesDomainPattern,
 } from './sandbox-utils.js'
 import { hasRipgrepSync } from '../utils/ripgrep.js'
 import { SandboxViolationStore } from './sandbox-violation-store.js'
@@ -67,18 +69,6 @@ function registerCleanup(): void {
   process.once('SIGINT', cleanupHandler)
   process.once('SIGTERM', cleanupHandler)
   cleanupRegistered = true
-}
-
-function matchesDomainPattern(hostname: string, pattern: string): boolean {
-  // Support wildcard patterns like *.example.com
-  // This matches any subdomain but not the base domain itself
-  if (pattern.startsWith('*.')) {
-    const baseDomain = pattern.substring(2) // Remove '*.'
-    return hostname.toLowerCase().endsWith('.' + baseDomain.toLowerCase())
-  }
-
-  // Exact match for non-wildcard patterns
-  return hostname.toLowerCase() === pattern.toLowerCase()
 }
 
 async function filterNetworkRequest(
@@ -343,27 +333,6 @@ function checkDependencies(ripgrepConfig?: {
   return true
 }
 
-/**
- * Normalize and filter paths for sandbox configuration.
- * Removes trailing glob suffixes and filters out unsupported glob patterns on Linux.
- */
-function normalizeAndFilterPaths(
-  paths: string[],
-  platform: Platform,
-): string[] {
-  return paths
-    ? paths
-        .map(path => removeTrailingGlobSuffix(path))
-        .filter(path => {
-          if (platform === 'linux' && containsGlobChars(path)) {
-            logForDebugging(`Skipping glob pattern on Linux: ${path}`)
-            return false
-          }
-          return true
-        })
-    : []
-}
-
 function getFsReadConfig(): FsReadRestrictionConfig | undefined {
   if (!config) {
     return undefined
@@ -410,7 +379,10 @@ function getFsReadConfig(): FsReadRestrictionConfig | undefined {
       if (hasDenyRead) {
         return {
           mode: 'deny-only',
-          denyPaths: normalizeAndFilterPaths(filesystem.denyRead, platform),
+          denyPaths: normalizeAndFilterPaths(
+            filesystem.denyRead || [],
+            platform,
+          ),
         }
       }
       // No read restrictions specified
@@ -428,7 +400,7 @@ function getFsReadConfig(): FsReadRestrictionConfig | undefined {
     if (hasDenyRead) {
       return {
         mode: 'deny-only',
-        denyPaths: normalizeAndFilterPaths(filesystem.denyRead, platform),
+        denyPaths: normalizeAndFilterPaths(filesystem.denyRead || [], platform),
       }
     }
 
@@ -445,7 +417,7 @@ function getFsWriteConfig(): FsWriteRestrictionConfig {
   }
 
   // Filter out glob patterns on Linux for allowWrite
-  const allowPaths = config.filesystem.allowWrite
+  const allowPaths = (config.filesystem.allowWrite || [])
     .map(path => removeTrailingGlobSuffix(path))
     .filter(path => {
       if (getPlatform() === 'linux' && containsGlobChars(path)) {
@@ -456,7 +428,7 @@ function getFsWriteConfig(): FsWriteRestrictionConfig {
     })
 
   // Filter out glob patterns on Linux for denyWrite
-  const denyPaths = config.filesystem.denyWrite
+  const denyPaths = (config.filesystem.denyWrite || [])
     .map(path => removeTrailingGlobSuffix(path))
     .filter(path => {
       if (getPlatform() === 'linux' && containsGlobChars(path)) {
@@ -902,8 +874,8 @@ function getLinuxGlobPatternWarnings(): string[] {
   const allPaths = [
     ...(config.filesystem.denyRead || []),
     ...(config.filesystem.allowRead || []),
-    ...config.filesystem.allowWrite,
-    ...config.filesystem.denyWrite,
+    ...(config.filesystem.allowWrite || []),
+    ...(config.filesystem.denyWrite || []),
   ]
 
   for (const path of allPaths) {
