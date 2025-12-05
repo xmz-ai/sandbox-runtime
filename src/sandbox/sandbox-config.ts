@@ -6,7 +6,7 @@
 import { z } from 'zod'
 
 /**
- * Schema for domain patterns (e.g., "example.com", "*.npmjs.org")
+ * Schema for domain patterns (e.g., "example.com", "*.npmjs.org", ".example.com")
  * Validates that domain patterns are safe and don't include overly broad wildcards
  */
 const domainPatternSchema = z.string().refine(
@@ -36,7 +36,22 @@ const domainPatternSchema = z.string().refine(
       return parts.length >= 2 && parts.every(p => p.length > 0)
     }
 
-    // Reject any other use of wildcards (e.g., *, *., etc.)
+    // NEW: Allow dot-prefix domains like .example.com (matches base domain + all subdomains)
+    if (val.startsWith('.') && !val.startsWith('*.')) {
+      const domain = val.slice(1)
+      // Must have at least one dot after the leading dot (e.g., .example.com is valid, .com is not)
+      if (
+        !domain.includes('.') ||
+        domain.startsWith('.') ||
+        domain.endsWith('.')
+      ) {
+        return false
+      }
+      const parts = domain.split('.')
+      return parts.length >= 2 && parts.every(p => p.length > 0)
+    }
+
+    // Reject any other use of wildcards (e.g., *., **, *foo, etc.)
     if (val.includes('*')) {
       return false
     }
@@ -46,7 +61,9 @@ const domainPatternSchema = z.string().refine(
   },
   {
     message:
-      'Invalid domain pattern. Must be a valid domain (e.g., "example.com") or wildcard (e.g., "*.example.com"). Overly broad patterns like "*.com" or "*" are not allowed for security reasons.',
+      'Invalid domain pattern. Must be a valid domain (e.g., "example.com"), ' +
+      'wildcard (e.g., "*.example.com"), or dot-prefix (e.g., ".example.com"). ' +
+      'Overly broad patterns like "*.com" or ".com" are not allowed for security reasons.',
   },
 )
 
@@ -60,11 +77,27 @@ const filesystemPathSchema = z.string().min(1, 'Path cannot be empty')
  */
 export const NetworkConfigSchema = z.object({
   allowedDomains: z
-    .array(domainPatternSchema)
-    .describe('List of allowed domains (e.g., ["github.com", "*.npmjs.org"])'),
+    .union([
+      z.literal('*').describe('Allow all domains (deny-only mode)'),
+      z
+        .array(domainPatternSchema)
+        .describe(
+          'List of allowed domains (e.g., ["github.com", "*.npmjs.org"])',
+        ),
+    ])
+    .describe(
+      'Allowed domains: "*" for allow-all mode, or array of domain patterns',
+    ),
   deniedDomains: z
-    .array(domainPatternSchema)
-    .describe('List of denied domains'),
+    .union([
+      z
+        .literal('*')
+        .describe('Deny all domains (allow-only mode with whitelist)'),
+      z.array(domainPatternSchema).describe('List of denied domains'),
+    ])
+    .describe(
+      'Denied domains: "*" for deny-all mode, or array of domain patterns',
+    ),
   allowUnixSockets: z
     .array(z.string())
     .optional()

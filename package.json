@@ -1,6 +1,6 @@
 {
   "name": "@xmz-ai/sandbox-runtime",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Xmz Sandbox Runtime - A general-purpose tool for wrapping security boundaries around arbitrary processes",
   "type": "module",
   "main": "./dist/index.js",

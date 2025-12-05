@@ -239,4 +239,120 @@ describe('Config Validation', () => {
       expect(result.data.ripgrep).toBeUndefined()
     }
   })
+
+  describe('dot-prefix domain patterns - NEW', () => {
+    test('should validate dot-prefix domain patterns', () => {
+      const validDotPrefix = [
+        '.example.com',
+        '.github.io',
+        '.co.uk',
+        '.api.example.com',
+      ]
+
+      for (const domain of validDotPrefix) {
+        const config = {
+          network: { allowedDomains: [domain], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+        }
+        const result = SandboxRuntimeConfigSchema.safeParse(config)
+        expect(result.success).toBe(true)
+      }
+    })
+
+    test('should reject invalid dot-prefix patterns', () => {
+      const invalidDotPrefix = [
+        '.com', // Too broad (only one part)
+        '..example.com', // Double dot
+        '.example.', // Trailing dot
+      ]
+
+      for (const domain of invalidDotPrefix) {
+        const config = {
+          network: { allowedDomains: [domain], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+        }
+        const result = SandboxRuntimeConfigSchema.safeParse(config)
+        expect(result.success).toBe(false)
+      }
+    })
+  })
+
+  describe('wildcard * string configuration - NEW', () => {
+    test('should validate standalone * wildcard as string for allowedDomains', () => {
+      const config = {
+        network: {
+          allowedDomains: '*', // String, not array
+          deniedDomains: [],
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+    })
+
+    test('should validate standalone * wildcard as string for deniedDomains', () => {
+      const config = {
+        network: {
+          allowedDomains: [],
+          deniedDomains: '*', // String, not array
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+    })
+
+    test('should reject * wildcard in array format', () => {
+      const config = {
+        network: {
+          allowedDomains: ['*'], // Array containing * - should be rejected
+          deniedDomains: [],
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(false)
+    })
+
+    test('should validate normal array configuration', () => {
+      const config = {
+        network: {
+          allowedDomains: ['example.com', '.github.com'],
+          deniedDomains: ['malicious.com'],
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+    })
+
+    test('should reject invalid wildcard variants', () => {
+      const invalidPatterns = ['**', '*foo', 'foo*', '*.*']
+
+      for (const pattern of invalidPatterns) {
+        const config = {
+          network: { allowedDomains: [pattern], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+        }
+        const result = SandboxRuntimeConfigSchema.safeParse(config)
+        expect(result.success).toBe(false)
+      }
+    })
+  })
 })
