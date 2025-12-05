@@ -1,17 +1,47 @@
-# Anthropic Sandbox Runtime (srt)
+# Xmz Sandbox Runtime (srt)
 
 A lightweight sandboxing tool for enforcing filesystem and network restrictions on arbitrary processes at the OS level, without requiring a container.
 
 `srt` uses native OS sandboxing primitives (`sandbox-exec` on macOS, `bubblewrap` on Linux) and proxy-based network filtering. It can be used to sandbox the behaviour of agents, local MCP servers, bash commands and arbitrary processes.
 
-> **Beta Research Preview**
+> **Note**
 >
-> The Sandbox Runtime is a research preview developed for [Claude Code](https://www.claude.com/product/claude-code) to enable safer AI agents. It's being made available as an early open source preview to help the broader ecosystem build more secure agentic systems. As this is an early research preview, APIs and configuration formats may evolve. We welcome feedback and contributions to make AI agents safer by default!
+> This project is forked from [Anthropic's Sandbox Runtime](https://github.com/anthropics/sandbox-runtime) with significant architectural changes and enhancements. The API has been refactored from a singleton pattern to a flexible class-based architecture that supports multiple concurrent sandbox instances with different configurations.
+
+## Key Differences from Original
+
+This fork introduces several major enhancements based on commit [9c0d868](https://github.com/anthropics/sandbox-runtime/commit/9c0d868acc963b9e8a06d82d3b4fe3d591ff8978):
+
+### Architecture Changes
+
+- **Class-based architecture**: Refactored from singleton pattern to instantiable classes (`NetworkManager` and `SandboxManager`)
+- **Dual-mode API**: Simple mode (SandboxManager manages NetworkManager internally) and Advanced mode (share NetworkManager across workers)
+- **Multi-worker support**: Multiple concurrent sandbox instances with different filesystem/environment configurations
+- **Separated concerns**: Network configuration (proxy lifecycle) now separate from instance configuration (filesystem/env)
+
+### New Features
+
+- **Custom environment variables** ([e647549](https://github.com/xmz-ai/sandbox-runtime/commit/e647549)): Set or inherit environment variables in sandboxed processes
+- **Node.js global proxy** ([ccbe204](https://github.com/xmz-ai/sandbox-runtime/commit/ccbe204)): Automatic proxy configuration for Node.js HTTP clients via global-agent
+- **WebSocket support** ([2cc0632](https://github.com/xmz-ai/sandbox-runtime/commit/2cc0632)): Handle WebSocket upgrade requests in HTTP proxy
+- **Enhanced Linux security**: Improved mandatory deny paths with configurable search depth
+
+### Bug Fixes
+
+- **Empty allowedDomains fix**: Fixed security vulnerability where `allowedDomains: []` didn't block network access
+- **Non-existent path handling** ([71d9033](https://github.com/xmz-ai/sandbox-runtime/commit/71d9033)): Improved write-deny for non-existent paths
+- **Device file normalization**: Skip normalization for `/dev/*` paths to preserve device access
 
 ## Installation
 
 ```bash
-npm install -g @anthropic-ai/sandbox-runtime
+npm install @xmz-ai/sandbox-runtime
+```
+
+Or install globally for CLI usage:
+
+```bash
+npm install -g @xmz-ai/sandbox-runtime
 ```
 
 ## Basic Usage
@@ -128,7 +158,16 @@ Both filesystem and network isolation are required for effective sandboxing. Wit
 
 Both HTTP/HTTPS (via HTTP proxy) and other TCP traffic (via SOCKS5 proxy) are mediated by these proxies, which enforce your domain allowlists and denylists.
 
-For more details on sandboxing in Claude Code, see:
+**Changes from Original Architecture:**
+
+This fork has refactored the singleton-based architecture into a class-based system:
+
+- **Before**: `SandboxManager.initialize()` / `SandboxManager.reset()` (static methods, global state)
+- **After**: `new SandboxManager()` / `sandbox.initialize()` (instance methods, no global state)
+
+This enables multiple concurrent sandbox instances with different configurations, which was not possible with the original singleton design.
+
+For more details on the original sandboxing approach in Claude Code, see:
 
 - [Claude Code Sandboxing Documentation](https://docs.claude.com/en/docs/claude-code/sandboxing)
 - [Beyond Permission Prompts: Making Claude Code More Secure and Autonomous](https://www.anthropic.com/engineering/claude-code-sandboxing)
@@ -145,15 +184,27 @@ src/
 │   ├── platform.ts          # Platform detection
 │   └── exec.ts              # Command execution utilities
 └── sandbox/                  # Sandbox implementation
-    ├── sandbox-manager.ts    # Main sandbox manager
-    ├── sandbox-schemas.ts    # Zod schemas for validation
+    ├── network-manager.ts    # NetworkManager class (proxy lifecycle)
+    ├── sandbox-manager.ts    # SandboxManager class (per-instance restrictions)
+    ├── sandbox-config.ts     # Zod schemas and TypeScript types
+    ├── sandbox-schemas.ts    # Internal restriction schemas
     ├── sandbox-violation-store.ts # Violation tracking
     ├── sandbox-utils.ts      # Shared sandbox utilities
+    ├── sandbox-dependencies.ts # Dependency checking
     ├── http-proxy.ts         # HTTP/HTTPS proxy for network filtering
     ├── socks-proxy.ts        # SOCKS5 proxy for network filtering
     ├── linux-sandbox-utils.ts # Linux bubblewrap sandboxing
-    └── macos-sandbox-utils.ts # macOS sandbox-exec sandboxing
+    ├── linux-network-bridge.ts # Linux Unix socket bridge (socat)
+    └── macos-sandbox-utils.ts # macOS sandbox-exec sandboxing (Seatbelt profiles)
 ```
+
+**Key Components:**
+
+- **NetworkManager**: Manages HTTP/SOCKS proxy servers for network filtering. Can be shared across multiple SandboxManager instances or created per-instance.
+
+- **SandboxManager**: Manages filesystem/environment restrictions for a specific sandbox instance. Multiple instances can run concurrently with different configurations.
+
+- **Platform-specific utilities**: Linux uses `bubblewrap` for containerization, macOS uses `sandbox-exec` with dynamically generated Seatbelt profiles.
 
 ## Usage
 
@@ -174,12 +225,12 @@ srt --settings /path/to/srt-settings.json npm install
 
 ### As a library
 
-#### Simple mode (recommended for most use cases)
+#### Simple Mode: Single Sandbox Instance
 
 For single-process applications or when you don't need to share network proxies:
 
 ```typescript
-import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
+import { SandboxManager } from '@xmz-ai/sandbox-runtime'
 import { spawn } from 'child_process'
 
 // Create SandboxManager with network and filesystem configuration
@@ -204,13 +255,15 @@ const sandbox = new SandboxManager(
 await sandbox.initialize()
 
 // Wrap a command with sandbox restrictions
-const sandboxedCommand = await sandbox.wrapWithSandbox('curl https://example.com')
+const sandboxedCommand = await sandbox.wrapWithSandbox(
+  'curl https://example.com',
+)
 
 // Execute the sandboxed command
 const child = spawn(sandboxedCommand, { shell: true, stdio: 'inherit' })
 
 // Handle exit
-child.on('exit', async (code) => {
+child.on('exit', async code => {
   console.log(`Command exited with code ${code}`)
 
   // Cleanup - automatically shuts down network proxies
@@ -218,12 +271,12 @@ child.on('exit', async (code) => {
 })
 ```
 
-#### Advanced mode: Multiple workers with shared network proxy
+#### Advanced Mode: Multiple Workers with Shared Network Proxy
 
 For daemon processes that spawn multiple workers with different configurations but shared network filtering:
 
 ```typescript
-import { NetworkManager, SandboxManager } from '@anthropic-ai/sandbox-runtime'
+import { NetworkManager, SandboxManager } from '@xmz-ai/sandbox-runtime'
 
 // Create shared NetworkManager (used by all workers)
 const networkManager = new NetworkManager()
@@ -257,36 +310,62 @@ const cmd1 = await worker1Sandbox.wrapWithSandbox('npm install')
 const cmd2 = await worker2Sandbox.wrapWithSandbox('python build.py')
 
 // Cleanup - dispose workers first, then shutdown shared network
-worker1Sandbox.dispose()  // Does NOT shutdown network (not owned)
-worker2Sandbox.dispose()  // Does NOT shutdown network (not owned)
-await networkManager.shutdown()  // Manually shutdown shared network proxies
+worker1Sandbox.dispose() // Does NOT shutdown network (not owned)
+worker2Sandbox.dispose() // Does NOT shutdown network (not owned)
+await networkManager.shutdown() // Manually shutdown shared network proxies
 ```
 
-**Key difference**: In advanced mode, `SandboxManager.dispose()` does NOT shutdown the shared `NetworkManager` - you must call `networkManager.shutdown()` manually when you're done.
+**Key differences between modes:**
 
-#### Available exports
+- **Simple mode**: Pass `NetworkConfig` as first parameter. SandboxManager creates and manages its own NetworkManager. Call `sandbox.initialize()` before use, and `sandbox.dispose()` shuts down both sandbox and network.
+
+- **Advanced mode**: Pass `NetworkManager` instance as first parameter. You control when to create and shutdown the NetworkManager. Multiple SandboxManager instances can share one NetworkManager. `sandbox.dispose()` only cleans up the instance, not the shared NetworkManager.
+
+#### Available Exports
 
 ```typescript
-// Network and sandbox managers
-export { NetworkManager } from '@anthropic-ai/sandbox-runtime'
-export { SandboxManager } from '@anthropic-ai/sandbox-runtime'
+// Core classes
+import {
+  NetworkManager, // Manages HTTP/SOCKS proxies for network filtering
+  SandboxManager, // Manages sandbox instances with filesystem/env restrictions
+  SandboxViolationStore, // Tracks sandbox violations
+} from '@xmz-ai/sandbox-runtime'
 
-// Violation tracking
-export { SandboxViolationStore } from '@anthropic-ai/sandbox-runtime'
+// Configuration types
+import type {
+  NetworkConfig, // Network configuration (allowedDomains, etc.)
+  SandboxInstanceConfig, // Per-instance config (filesystem, env)
+  SandboxOptions, // Optional constructor options
+  FilesystemConfig, // Filesystem restrictions
+  IgnoreViolationsConfig, // Violation filtering rules
+  EnvConfig, // Environment variable config
+  RipgrepConfig, // Custom ripgrep configuration
+} from '@xmz-ai/sandbox-runtime'
 
-// TypeScript types
-export type {
-  NetworkConfig,             // Config for NetworkManager
-  SandboxInstanceConfig,     // Config for SandboxManager instances
-  SandboxOptions,            // Optional SandboxManager constructor options
-  FilesystemConfig,
-  IgnoreViolationsConfig,
-  SandboxAskCallback,
-  FsReadRestrictionConfig,
-  FsWriteRestrictionConfig,
-  NetworkRestrictionConfig,
-  NetworkContext,            // Network context (proxy ports, etc.)
-} from '@anthropic-ai/sandbox-runtime'
+// Internal types (for advanced usage)
+import type {
+  NetworkContext, // Network context (proxy ports, Linux bridges)
+  FsReadRestrictionConfig, // Internal read restriction format
+  FsWriteRestrictionConfig, // Internal write restriction format
+} from '@xmz-ai/sandbox-runtime'
+```
+
+**Constructor Signatures:**
+
+```typescript
+// Simple mode
+new SandboxManager(
+  networkConfig: NetworkConfig,
+  instanceConfig: SandboxInstanceConfig,
+  options?: SandboxOptions
+)
+
+// Advanced mode
+new SandboxManager(
+  networkManager: NetworkManager,
+  instanceConfig: SandboxInstanceConfig,
+  options?: SandboxOptions
+)
 ```
 
 ## Configuration
@@ -299,9 +378,48 @@ By default, the sandbox runtime looks for configuration at `~/.srt-settings.json
 srt --settings /path/to/srt-settings.json <command>
 ```
 
+### Configuration Reference
+
+#### NetworkConfig (for NetworkManager or simple mode)
+
+```typescript
+interface NetworkConfig {
+  allowedDomains: string[] // Allowed domains (supports wildcards like "*.example.com")
+  deniedDomains: string[] // Denied domains (checked first, takes precedence)
+  allowUnixSockets?: string[] // Unix socket paths to allow (macOS only)
+  allowAllUnixSockets?: boolean // Allow all Unix sockets (Linux only)
+  allowLocalBinding?: boolean // Allow binding to local ports (default: false)
+  httpProxyPort?: number // Use external HTTP proxy instead of starting one
+  socksProxyPort?: number // Use external SOCKS proxy instead of starting one
+}
+```
+
+#### SandboxInstanceConfig (for SandboxManager)
+
+```typescript
+interface SandboxInstanceConfig {
+  filesystem: FilesystemConfig
+  env?: Record<string, string | null> // Environment variables (null = inherit from host)
+  ignoreViolations?: Record<string, string[]> // Violation filtering rules
+  enableWeakerNestedSandbox?: boolean // Weaker mode for Docker (Linux only)
+  ripgrep?: { command: string; args?: string[] } // Custom ripgrep config
+  mandatoryDenySearchDepth?: number // Max depth for dangerous file search (1-10, default: 3)
+  allowPty?: boolean // Allow pseudo-terminal operations (macOS only, for tmux/screen)
+}
+```
+
+#### SandboxOptions (optional constructor parameter)
+
+```typescript
+interface SandboxOptions {
+  enableLogMonitor?: boolean // Enable macOS sandbox log monitoring (default: false)
+}
+```
+
 ### Complete Configuration Example
 
-**Example with deny-only read mode (backward compatible):**
+**Example with deny-only read mode (works on both macOS and Linux):**
+
 ```json
 {
   "network": {
@@ -327,11 +445,13 @@ srt --settings /path/to/srt-settings.json <command>
     "git push": ["/usr/bin/nc"],
     "npm": ["/private/tmp"]
   },
+  "allowPty": false,
   "enableWeakerNestedSandbox": false
 }
 ```
 
 **Example with allow-only read mode (more secure, Linux only):**
+
 ```json
 {
   "network": {
@@ -344,32 +464,34 @@ srt --settings /path/to/srt-settings.json <command>
     "deniedDomains": []
   },
   "filesystem": {
-    "allowRead": [
-      ".",
-      "src/",
-      "test/",
-      "/tmp"
-    ],
-    "denyRead": [
-      ".env",
-      "secrets.json",
-      ".aws/credentials"
-    ],
+    "allowRead": [".", "src/", "test/", "/tmp"],
+    "denyRead": [".env", "secrets.json", ".aws/credentials"],
     "autoAllowSystemPaths": true,
-    "allowWrite": [
-      ".",
-      "src/",
-      "test/",
-      "/tmp"
-    ],
-    "denyWrite": [
-      ".env",
-      ".git"
-    ]
+    "allowWrite": [".", "src/", "test/", "/tmp"],
+    "denyWrite": [".env", ".git"]
   },
+  "allowPty": false,
+  "mandatoryDenySearchDepth": 3,
   "enableWeakerNestedSandbox": false
 }
 ```
+
+**Example with PTY support for tmux/screen (macOS only):**
+
+```json
+{
+  "network": {
+    "allowedDomains": ["github.com"],
+    "deniedDomains": []
+  },
+  "filesystem": {
+    "allowWrite": ["."]
+  },
+  "allowPty": true
+}
+```
+
+When `allowPty` is `true` on macOS, the sandbox allows pseudo-terminal operations needed by terminal multiplexers like tmux, screen, and the `script` command. This is disabled by default for security.
 
 ### Configuration Options
 
@@ -387,12 +509,14 @@ Uses an **allow-only pattern** - all network access is denied by default.
 **Read restrictions** support two modes:
 
 **Deny-only mode** (backward compatible):
+
 - `filesystem.denyRead` - Array of paths to deny read access. By default, all paths are readable except the denied ones.
 - **Supported on**: Linux and macOS
 - **Use case**: When you want to allow broad read access but block specific sensitive paths (e.g., `~/.ssh`, credentials files)
 - **Example**: `"denyRead": ["~/.ssh", "~/.aws"]` means everything is readable except those paths
 
 **Allow-only mode** (more secure):
+
 - `filesystem.allowRead` - Array of paths to allow read access. By default, only specified paths are readable.
 - `filesystem.denyRead` - When used with `allowRead`, this denies specific paths within the allowed paths (deny-within-allow pattern).
 - `filesystem.autoAllowSystemPaths` - Boolean (default: `true`). Automatically include system paths (like `/usr`, `/bin`, `/lib`) needed for commands to execute.
@@ -401,6 +525,7 @@ Uses an **allow-only pattern** - all network access is denied by default.
 - **Example**: `"allowRead": [".", "/tmp"], "denyRead": [".env", "secrets.json"]` with `autoAllowSystemPaths: true` means only those paths (plus system paths) are readable, except `.env` and `secrets.json` are blocked
 
 **Important notes:**
+
 - **denyRead semantics**: The meaning of `denyRead` depends on whether you use `allowRead`:
   - **Without `allowRead`** (deny-only mode): `denyRead` globally denies paths
   - **With `allowRead`** (allow-only mode): `denyRead` denies paths within allowed paths
@@ -443,8 +568,12 @@ Examples:
 
 #### Other Configuration
 
-- `ignoreViolations` - Object mapping command patterns to arrays of paths where violations should be ignored
-- `enableWeakerNestedSandbox` - Enable weaker sandbox mode for Docker environments (boolean, default: false)
+- `ignoreViolations` - Object mapping command patterns to arrays of paths where violations should be ignored (macOS only)
+- `allowPty` - Allow pseudo-terminal (PTY) operations for tmux and other terminal multiplexers (macOS only, default: false)
+- `enableWeakerNestedSandbox` - Enable weaker sandbox mode for Docker environments (Linux only, default: false)
+- `mandatoryDenySearchDepth` - Maximum directory depth to search for dangerous files (Linux only, 1-10, default: 3)
+- `ripgrep` - Custom ripgrep configuration for file scanning (Linux only)
+- `env` - Custom environment variables to set in sandboxed processes (string value or null to inherit from host)
 
 ### Common Configuration Recipes
 
@@ -470,6 +599,7 @@ Examples:
 ```
 
 **Restrict to specific directories (deny-only mode):**
+
 ```json
 {
   "network": {
@@ -485,6 +615,7 @@ Examples:
 ```
 
 **Maximum security: only allow reading specific directories (allow-only mode, Linux only):**
+
 ```json
 {
   "network": {
@@ -502,6 +633,7 @@ Examples:
 ```
 
 This configuration (Linux only):
+
 - Only allows reading the current directory and `/tmp`
 - Blocks reading `.env` and `secrets.json` even within the current directory
 - Automatically includes system paths (`/usr`, `/bin`, `/lib`, etc.) for commands to execute
@@ -509,11 +641,17 @@ This configuration (Linux only):
 - Blocks writing to `.env` and `.git` even within the current directory
 - **Note**: On macOS, this will fall back to deny-only mode (no read restrictions)
 
-**Sandbox MCP servers or AI agents (recommended):**
+**Sandbox MCP servers or AI agents with environment variables:**
+
 ```json
 {
   "network": {
-    "allowedDomains": ["github.com", "*.github.com", "npmjs.org", "*.npmjs.org"],
+    "allowedDomains": [
+      "github.com",
+      "*.github.com",
+      "npmjs.org",
+      "*.npmjs.org"
+    ],
     "deniedDomains": []
   },
   "filesystem": {
@@ -522,11 +660,21 @@ This configuration (Linux only):
     "autoAllowSystemPaths": true,
     "allowWrite": ["/path/to/project"],
     "denyWrite": ["/path/to/project/.env", "/path/to/project/.git"]
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "PATH": null,
+    "HOME": null
   }
 }
 ```
 
-This ensures that MCP servers or AI agents can only access the specified project directory and cannot read sensitive files like SSH keys, AWS credentials, or project secrets.
+This configuration:
+
+- Restricts access to a specific project directory
+- Blocks sensitive files like SSH keys, AWS credentials, and secrets
+- Sets `NODE_ENV` to a specific value
+- Inherits `PATH` and `HOME` from the host environment (null = inherit)
 
 ### Common Issues and Tips
 
@@ -576,6 +724,8 @@ The package includes pre-generated seccomp BPF filters for x86-64 and arm archit
 - `ripgrep` - Fast search tool for deny path detection
   - Install via Homebrew: `brew install ripgrep`
   - Or download from: https://github.com/BurntSushi/ripgrep/releases
+
+**Note**: On macOS, `ripgrep` is only required if you plan to use custom ripgrep configurations. The built-in `rg` command is sufficient for normal usage.
 
 ## Development
 
