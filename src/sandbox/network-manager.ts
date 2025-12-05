@@ -24,8 +24,8 @@ export interface NetworkContext {
  * Configuration for NetworkManager
  */
 export interface NetworkConfig {
-  allowedDomains: string[]
-  deniedDomains: string[]
+  allowedDomains: string | string[]
+  deniedDomains: string | string[]
   allowUnixSockets?: string[]
   allowAllUnixSockets?: boolean
   allowLocalBinding?: boolean
@@ -78,7 +78,11 @@ export class NetworkManager {
       try {
         // Only start proxies and bridges if we have domains to filter
         // If allowedDomains is empty, we block ALL network (no proxy/bridge needed)
-        const needsProxy = config.allowedDomains.length > 0
+        const allowedDomains =
+          typeof config.allowedDomains === 'string'
+            ? [config.allowedDomains]
+            : config.allowedDomains
+        const needsProxy = allowedDomains.length > 0
 
         if (!needsProxy) {
           logForDebugging(
@@ -381,6 +385,14 @@ export class NetworkManager {
     this.cleanupRegistered = true
   }
 
+  /**
+   * Normalize domains configuration to array format
+   * Converts string '*' to ['*'], otherwise returns the array as-is
+   */
+  private normalizeDomainsToArray(domains: string | string[]): string[] {
+    return typeof domains === 'string' ? [domains] : domains
+  }
+
   private async filterNetworkRequest(
     port: number,
     host: string,
@@ -390,8 +402,56 @@ export class NetworkManager {
       return false
     }
 
+    // Normalize configuration to arrays
+    const allowedDomains = this.normalizeDomainsToArray(
+      this.config.allowedDomains,
+    )
+    const deniedDomains = this.normalizeDomainsToArray(
+      this.config.deniedDomains,
+    )
+
+    // Check for wildcards
+    const hasAllowAll = allowedDomains.includes('*')
+    const hasDenyAll = deniedDomains.includes('*')
+
+    // Configuration conflict: both allowedDomains and deniedDomains cannot be '*'
+    if (hasAllowAll && hasDenyAll) {
+      throw new Error(
+        'Invalid configuration: allowedDomains and deniedDomains cannot both be "*"',
+      )
+    }
+
+    // Case 1: allow-all mode (default allow, check deny rules)
+    if (hasAllowAll) {
+      for (const deniedDomain of deniedDomains) {
+        if (matchesDomainPattern(host, deniedDomain)) {
+          logForDebugging(
+            `Denied by config rule in allow-all mode: ${host}:${port}`,
+          )
+          return false
+        }
+      }
+      logForDebugging(`Allowed by allow-all wildcard: ${host}:${port}`)
+      return true
+    }
+
+    // Case 2: deny-all mode (default deny, check allow rules)
+    if (hasDenyAll) {
+      for (const allowedDomain of allowedDomains) {
+        if (matchesDomainPattern(host, allowedDomain)) {
+          logForDebugging(
+            `Allowed by config rule in deny-all mode: ${host}:${port}`,
+          )
+          return true
+        }
+      }
+      logForDebugging(`Denied by deny-all wildcard: ${host}:${port}`)
+      return false
+    }
+
+    // Case 3: standard mode (no * wildcards, check deny first then allow)
     // Check denied domains first
-    for (const deniedDomain of this.config.deniedDomains) {
+    for (const deniedDomain of deniedDomains) {
       if (matchesDomainPattern(host, deniedDomain)) {
         logForDebugging(`Denied by config rule: ${host}:${port}`)
         return false
@@ -399,7 +459,7 @@ export class NetworkManager {
     }
 
     // Check allowed domains
-    for (const allowedDomain of this.config.allowedDomains) {
+    for (const allowedDomain of allowedDomains) {
       if (matchesDomainPattern(host, allowedDomain)) {
         logForDebugging(`Allowed by config rule: ${host}:${port}`)
         return true

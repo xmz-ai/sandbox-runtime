@@ -285,30 +285,58 @@ export function decodeSandboxedCommand(encodedCommand: string): string {
 
 /**
  * Check if a hostname matches a domain pattern.
- * Supports wildcard patterns like *.example.com
+ * Supports multiple pattern types:
+ * - Exact match: "example.com" matches only "example.com"
+ * - Subdomain wildcard: "*.example.com" matches "api.example.com" but NOT "example.com"
+ * - Full wildcard: ".example.com" matches "example.com" AND all subdomains
+ * - Match all: "*" matches any hostname
  *
  * @param hostname The hostname to check
- * @param pattern The domain pattern (supports wildcards like *.example.com)
+ * @param pattern The domain pattern
  * @returns true if hostname matches the pattern
  *
  * @example
+ * matchesDomainPattern('example.com', '*') // true (matches everything)
+ * matchesDomainPattern('api.example.com', '.example.com') // true
+ * matchesDomainPattern('example.com', '.example.com') // true (base domain)
  * matchesDomainPattern('api.example.com', '*.example.com') // true
- * matchesDomainPattern('example.com', '*.example.com') // false (wildcard doesn't match base domain)
+ * matchesDomainPattern('example.com', '*.example.com') // false
  * matchesDomainPattern('example.com', 'example.com') // true (exact match)
  */
 export function matchesDomainPattern(
   hostname: string,
   pattern: string,
 ): boolean {
-  // Support wildcard patterns like *.example.com
-  // This matches any subdomain but not the base domain itself
-  if (pattern.startsWith('*.')) {
-    const baseDomain = pattern.substring(2) // Remove '*.'
-    return hostname.toLowerCase().endsWith('.' + baseDomain.toLowerCase())
+  // Normalize both to lowercase for case-insensitive matching
+  const normalizedHost = hostname.toLowerCase()
+  const normalizedPattern = pattern.toLowerCase()
+
+  // NEW: Match-all wildcard
+  if (normalizedPattern === '*') {
+    return true
   }
 
-  // Exact match for non-wildcard patterns
-  return hostname.toLowerCase() === pattern.toLowerCase()
+  // NEW: Dot-prefix pattern (matches base domain AND all subdomains)
+  // .example.com matches: example.com, api.example.com, deep.api.example.com
+  if (
+    normalizedPattern.startsWith('.') &&
+    !normalizedPattern.startsWith('*.')
+  ) {
+    const baseDomain = normalizedPattern.substring(1) // Remove leading '.'
+    return (
+      normalizedHost === baseDomain || normalizedHost.endsWith('.' + baseDomain)
+    )
+  }
+
+  // EXISTING: Subdomain wildcard pattern (matches subdomains only, NOT base domain)
+  // *.example.com matches: api.example.com, but NOT example.com
+  if (normalizedPattern.startsWith('*.')) {
+    const baseDomain = normalizedPattern.substring(2) // Remove '*.'
+    return normalizedHost.endsWith('.' + baseDomain)
+  }
+
+  // EXISTING: Exact match for non-wildcard patterns
+  return normalizedHost === normalizedPattern
 }
 
 /**

@@ -418,18 +418,14 @@ interface SandboxOptions {
 
 ### Complete Configuration Example
 
-**Example with deny-only read mode (works on both macOS and Linux):**
+**Example 1: Standard mode with simplified domain patterns:**
 
 ```json
 {
   "network": {
     "allowedDomains": [
-      "github.com",
-      "*.github.com",
-      "lfs.github.com",
-      "api.github.com",
-      "npmjs.org",
-      "*.npmjs.org"
+      ".github.com",  // Matches github.com AND all subdomains (simplified!)
+      ".npmjs.org"    // Matches npmjs.org AND all subdomains
     ],
     "deniedDomains": ["malicious.com"],
     "allowUnixSockets": ["/var/run/docker.sock"],
@@ -450,18 +446,29 @@ interface SandboxOptions {
 }
 ```
 
-**Example with allow-only read mode (more secure, Linux only):**
+**Example 2: Allow-all mode for development:**
 
 ```json
 {
   "network": {
-    "allowedDomains": [
-      "github.com",
-      "*.github.com",
-      "npmjs.org",
-      "*.npmjs.org"
-    ],
-    "deniedDomains": []
+    "allowedDomains": "*",  // Allow all domains (string, not array)
+    "deniedDomains": [".internal-corp.com", "malicious.com"]  // Block internal and known bad domains
+  },
+  "filesystem": {
+    "denyRead": ["~/.ssh"],
+    "allowWrite": ["."],
+    "denyWrite": [".env"]
+  }
+}
+```
+
+**Example 3: Deny-all mode with strict whitelist (Linux only):**
+
+```json
+{
+  "network": {
+    "allowedDomains": ["github.com", "npmjs.org"],  // Only these domains allowed
+    "deniedDomains": "*"  // Deny all by default (string, not array)
   },
   "filesystem": {
     "allowRead": [".", "src/", "test/", "/tmp"],
@@ -497,12 +504,44 @@ When `allowPty` is `true` on macOS, the sandbox allows pseudo-terminal operation
 
 #### Network Configuration
 
-Uses an **allow-only pattern** - all network access is denied by default.
+Uses flexible filtering modes with multiple pattern types.
 
-- `network.allowedDomains` - Array of allowed domains (supports wildcards like `*.example.com`). Empty array = no network access.
-- `network.deniedDomains` - Array of denied domains (checked first, takes precedence over allowedDomains)
+**Configuration Fields:**
+
+- `network.allowedDomains` - Allowed domain patterns. Can be:
+  - `"*"` (string) - Allow-all mode: permits all domains except those in `deniedDomains`
+  - Array of patterns - Standard mode: only listed patterns are allowed
+- `network.deniedDomains` - Denied domain patterns. Can be:
+  - `"*"` (string) - Deny-all mode: blocks all domains except those in `allowedDomains`
+  - Array of patterns - Block specific domains (takes precedence over `allowedDomains`)
 - `network.allowUnixSockets` - Array of Unix socket paths that can be accessed (macOS only)
 - `network.allowLocalBinding` - Allow binding to local ports (boolean, default: false)
+
+**Domain Pattern Types:**
+
+- **Exact match**: `"example.com"` - matches only `example.com`
+- **Subdomain wildcard**: `"*.example.com"` - matches `api.example.com`, `sub.api.example.com`, but NOT `example.com`
+- **Full wildcard**: `".example.com"` - matches `example.com` AND all subdomains (e.g., `api.example.com`, `sub.api.example.com`)
+- **Match all**: `"*"` - matches any domain (must be a string, not in array)
+- **localhost**: `"localhost"` - matches localhost
+
+**Filtering Modes:**
+
+1. **Standard mode** (default): `allowedDomains` is an array
+   - Default: deny all
+   - Check `deniedDomains` first (if matches, deny)
+   - Then check `allowedDomains` (if matches, allow)
+   - Otherwise, deny
+
+2. **Allow-all mode**: `allowedDomains: "*"`
+   - Default: allow all
+   - Only `deniedDomains` can block access
+   - Useful for development or when network filtering is handled externally
+
+3. **Deny-all mode**: `deniedDomains: "*"`
+   - Default: deny all
+   - Only `allowedDomains` can permit access
+   - Strictest mode: explicit whitelist only
 
 #### Filesystem Configuration
 
@@ -575,19 +614,41 @@ Examples:
 - `ripgrep` - Custom ripgrep configuration for file scanning (Linux only)
 - `env` - Custom environment variables to set in sandboxed processes (string value or null to inherit from host)
 
+### Pattern Migration Guide
+
+The new `.example.com` pattern simplifies configuration by matching both the base domain and all subdomains with a single rule.
+
+**Before (multiple rules needed):**
+```json
+{
+  "allowedDomains": ["github.com", "*.github.com"]  // Two rules for base + subdomains
+}
+```
+
+**After (single rule):**
+```json
+{
+  "allowedDomains": [".github.com"]  // One rule matches both!
+}
+```
+
+**Pattern comparison:**
+
+| Pattern | Matches `example.com` | Matches `api.example.com` | Matches `deep.api.example.com` |
+|---------|---------------------|-------------------------|------------------------------|
+| `"example.com"` | ✅ Yes | ❌ No | ❌ No |
+| `"*.example.com"` | ❌ No | ✅ Yes | ✅ Yes |
+| `".example.com"` (NEW) | ✅ Yes | ✅ Yes | ✅ Yes |
+| `"*"` (NEW) | ✅ Yes | ✅ Yes | ✅ Yes |
+
 ### Common Configuration Recipes
 
-**Allow GitHub access** (all necessary endpoints):
+**Allow GitHub access** (simplified with new pattern):
 
 ```json
 {
   "network": {
-    "allowedDomains": [
-      "github.com",
-      "*.github.com",
-      "lfs.github.com",
-      "api.github.com"
-    ],
+    "allowedDomains": [".github.com"],  // Matches github.com AND all subdomains!
     "deniedDomains": []
   },
   "filesystem": {
@@ -641,18 +702,13 @@ This configuration (Linux only):
 - Blocks writing to `.env` and `.git` even within the current directory
 - **Note**: On macOS, this will fall back to deny-only mode (no read restrictions)
 
-**Sandbox MCP servers or AI agents with environment variables:**
+**Sandbox MCP servers or AI agents (development mode):**
 
 ```json
 {
   "network": {
-    "allowedDomains": [
-      "github.com",
-      "*.github.com",
-      "npmjs.org",
-      "*.npmjs.org"
-    ],
-    "deniedDomains": []
+    "allowedDomains": "*",  // Allow all for development
+    "deniedDomains": [".internal-company.com"]  // Block internal domains
   },
   "filesystem": {
     "allowRead": ["/path/to/project"],
