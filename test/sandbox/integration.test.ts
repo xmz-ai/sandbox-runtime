@@ -11,30 +11,18 @@ import type { Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getPlatform } from '../../src/utils/platform.js'
+import { NetworkManager } from '../../src/sandbox/network-manager.js'
 import { SandboxManager } from '../../src/sandbox/sandbox-manager.js'
-import type { SandboxRuntimeConfig } from '../../src/sandbox/sandbox-config.js'
 import { generateSeccompFilter } from '../../src/sandbox/generate-seccomp-filter.js'
 
-/**
- * Create a minimal test configuration for the sandbox with example.com allowed
- */
-function createTestConfig(testDir: string): SandboxRuntimeConfig {
-  return {
-    network: {
-      allowedDomains: ['example.com'],
-      deniedDomains: [],
-    },
-    filesystem: {
-      denyRead: [],
-      allowWrite: [testDir],
-      denyWrite: [],
-    },
-  }
-}
+// Helper type for test configuration
 
 function skipIfNotLinux(): boolean {
   return getPlatform() !== 'linux'
 }
+
+// Shared NetworkManager for all integration tests to avoid resource contention on ARM64
+let sharedNetworkManager: NetworkManager | null = null
 
 // ============================================================================
 // Helper Function
@@ -62,6 +50,8 @@ describe('Sandbox Integration Tests', () => {
   // Use a directory within the repository (which is the CWD)
   const TEST_DIR = join(process.cwd(), '.sandbox-test-tmp')
   let socketServer: Server | null = null
+  let networkManager: NetworkManager | null = null
+  let sandboxManager: SandboxManager | null = null
 
   beforeAll(async () => {
     if (skipIfNotLinux()) {
@@ -97,8 +87,25 @@ describe('Sandbox Integration Tests', () => {
       socketServer!.on('error', reject)
     })
 
-    // Initialize sandbox
-    await SandboxManager.initialize(createTestConfig(TEST_DIR))
+    // Initialize shared NetworkManager (create if first time, reuse otherwise)
+    if (!sharedNetworkManager) {
+      sharedNetworkManager = new NetworkManager()
+    }
+    networkManager = sharedNetworkManager
+
+    await networkManager.initialize({
+      allowedDomains: ['example.com'],
+      deniedDomains: [],
+    })
+
+    // Initialize SandboxManager
+    sandboxManager = new SandboxManager(networkManager, {
+      filesystem: {
+        denyRead: [],
+        allowWrite: [TEST_DIR],
+        denyWrite: [],
+      },
+    })
   })
 
   afterAll(async () => {
@@ -121,8 +128,13 @@ describe('Sandbox Integration Tests', () => {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
 
-    // Reset sandbox
-    await SandboxManager.reset()
+    // Clean up sandbox manager and network manager
+    if (sandboxManager) {
+      await sandboxManager.dispose()
+    }
+    if (networkManager) {
+      await networkManager.shutdown()
+    }
   })
 
   // ==========================================================================
@@ -146,7 +158,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Wrap command with sandbox
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           `echo "Test message" | nc -U ${TEST_SOCKET_PATH}`,
         )
 
@@ -173,7 +185,7 @@ describe('Sandbox Integration Tests', () => {
           return
         }
 
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'curl -s http://blocked-domain.example',
         )
 
@@ -193,7 +205,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Use --max-time to timeout quickly, and --show-error to see proxy errors
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'curl -s --show-error --max-time 2 https://www.anthropic.com',
         )
 
@@ -221,7 +233,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Note: example.com should be in the allowlist via .claude/settings.json
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'curl -s http://example.com',
         )
 
@@ -251,7 +263,7 @@ describe('Sandbox Integration Tests', () => {
           unlinkSync(testFile)
         }
 
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           `echo "should fail" > ${testFile}`,
         )
 
@@ -286,7 +298,7 @@ describe('Sandbox Integration Tests', () => {
           unlinkSync(testFile)
         }
 
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           `echo "${testContent}" > allowed-write.txt`,
         )
 
@@ -327,7 +339,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Try reading from home directory
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'head -n 5 ~/.bashrc',
         )
 
@@ -407,7 +419,7 @@ describe('Sandbox Integration Tests', () => {
           return
         }
 
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'echo "Hello from sandbox"',
         )
 
@@ -426,7 +438,7 @@ describe('Sandbox Integration Tests', () => {
           return
         }
 
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'echo "line1\nline2\nline3" | grep line2',
         )
 
@@ -459,7 +471,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Use a zsh-specific feature: $ZSH_VERSION
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'echo "Shell: $ZSH_VERSION"',
           'zsh',
         )
@@ -491,7 +503,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Use zsh parameter expansion feature
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'VAR="hello world" && echo ${VAR:u}',
           'zsh',
         )
@@ -512,7 +524,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Check for bash-specific variable
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'echo "Shell: $BASH_VERSION"',
         )
 
@@ -536,7 +548,7 @@ describe('Sandbox Integration Tests', () => {
 
         // Use /proc to check PID namespace isolation
         // Inside sandbox, should only see sandbox PIDs in /proc
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           'ls /proc | grep -E "^[0-9]+$" | wc -l',
         )
 
@@ -565,7 +577,7 @@ describe('Sandbox Integration Tests', () => {
 
         // Try to create symlink inside allowed dir pointing to restricted location
         // Then try to write through it
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           `ln -s ${targetOutside} ${linkInAllowed} 2>&1 && echo "escaped" > ${linkInAllowed} 2>&1`,
         )
 
@@ -605,7 +617,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Start a background process that writes every 0.5 second
-        const command = await SandboxManager.wrapWithSandbox(
+        const command = await sandboxManager!.wrapWithSandbox(
           `(while true; do echo "alive" >> ${markerFile}; sleep 0.5; done) & sleep 2`,
         )
 
@@ -648,7 +660,7 @@ describe('Sandbox Integration Tests', () => {
         // but bwrap ensures it doesn't grant actual privilege escalation
         const setuidTest = join(TEST_DIR, 'setuid-test')
 
-        const command1 = await SandboxManager.wrapWithSandbox(
+        const command1 = await sandboxManager!.wrapWithSandbox(
           `cp /bin/bash ${setuidTest} 2>&1 && chmod u+s ${setuidTest} 2>&1 && ${setuidTest} -c "id -u" 2>&1`,
         )
 
@@ -664,7 +676,7 @@ describe('Sandbox Integration Tests', () => {
         expect(parseInt(uid || '0')).toBeGreaterThan(0) // Not root (0)
 
         // Test 2: Cannot use sudo/su (should not be available or fail)
-        const command2 = await SandboxManager.wrapWithSandbox(
+        const command2 = await sandboxManager!.wrapWithSandbox(
           'sudo -n echo "elevated" 2>&1 || su -c "echo elevated" 2>&1 || echo "commands blocked"',
         )
 
@@ -698,7 +710,7 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Test 1: HTTPS to blocked domain (not just HTTP)
-        const command1 = await SandboxManager.wrapWithSandbox(
+        const command1 = await sandboxManager!.wrapWithSandbox(
           'curl -s --show-error --max-time 2 --connect-timeout 2 https://blocked-domain.example 2>&1 || echo "curl_failed"',
         )
 
@@ -720,7 +732,7 @@ describe('Sandbox Integration Tests', () => {
         expect(didNotSucceed).toBe(true)
 
         // Test 2: Non-standard port should also be blocked
-        const command2 = await SandboxManager.wrapWithSandbox(
+        const command2 = await sandboxManager!.wrapWithSandbox(
           'curl -s --show-error --max-time 2 http://blocked-domain.example:8080 2>&1',
         )
 
@@ -736,7 +748,7 @@ describe('Sandbox Integration Tests', () => {
 
         // Test 3: Direct IP addresses should also be blocked
         // The network allowlist blocks ALL domains/IPs not explicitly allowed
-        const command3 = await SandboxManager.wrapWithSandbox(
+        const command3 = await sandboxManager!.wrapWithSandbox(
           'curl -s --max-time 2 http://1.1.1.1 2>&1', // Cloudflare DNS
         )
 
@@ -752,7 +764,7 @@ describe('Sandbox Integration Tests', () => {
         expect(output3).toContain('blocked by network allowlist')
 
         // Test 4: Verify HTTPS to allowed domain still works
-        const command4 = await SandboxManager.wrapWithSandbox(
+        const command4 = await sandboxManager!.wrapWithSandbox(
           'curl -s --max-time 5 https://example.com 2>&1',
         )
 
@@ -777,12 +789,14 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Reset and reinitialize with wildcard pattern
-        await SandboxManager.reset()
-        await SandboxManager.initialize({
-          network: {
-            allowedDomains: ['*.github.com', 'example.com'],
-            deniedDomains: [],
-          },
+        // Reuse existing NetworkManager but reconfigure it
+        await networkManager!.shutdown()
+        await networkManager!.initialize({
+          allowedDomains: ['*.github.com', 'example.com'],
+          deniedDomains: [],
+        })
+
+        const wildcardSandboxManager = new SandboxManager(networkManager!, {
           filesystem: {
             denyRead: [],
             allowWrite: [],
@@ -791,7 +805,7 @@ describe('Sandbox Integration Tests', () => {
         })
 
         // Test 1: Subdomain should match wildcard
-        const command1 = await SandboxManager.wrapWithSandbox(
+        const command1 = await wildcardSandboxManager.wrapWithSandbox(
           'curl -s --max-time 3 http://api.github.com 2>&1 | head -20',
         )
 
@@ -806,7 +820,7 @@ describe('Sandbox Integration Tests', () => {
         expect(output1).not.toContain('blocked by network allowlist')
 
         // Test 2: Base domain should NOT match wildcard (*.github.com doesn't match github.com)
-        const command2 = await SandboxManager.wrapWithSandbox(
+        const command2 = await wildcardSandboxManager.wrapWithSandbox(
           'curl -s --max-time 2 http://github.com 2>&1',
         )
 
@@ -821,7 +835,7 @@ describe('Sandbox Integration Tests', () => {
         expect(output2).toContain('blocked by network allowlist')
 
         // Test 3: Malicious lookalike domain should NOT match
-        const command3 = await SandboxManager.wrapWithSandbox(
+        const command3 = await wildcardSandboxManager.wrapWithSandbox(
           'curl -s --max-time 2 http://malicious-github.com 2>&1',
         )
 
@@ -836,7 +850,7 @@ describe('Sandbox Integration Tests', () => {
         expect(output3).toContain('blocked by network allowlist')
 
         // Test 4: Multiple subdomains should match
-        const command4 = await SandboxManager.wrapWithSandbox(
+        const command4 = await wildcardSandboxManager.wrapWithSandbox(
           'curl -s --max-time 3 http://raw.githubusercontent.com 2>&1 | head -20',
         )
 
@@ -850,9 +864,13 @@ describe('Sandbox Integration Tests', () => {
         const output4 = result4.stdout.toLowerCase()
         expect(output4).toContain('blocked by network allowlist')
 
-        // Restore original config
-        await SandboxManager.reset()
-        await SandboxManager.initialize(createTestConfig(TEST_DIR))
+        // Cleanup wildcard test instance and restore original config
+        await wildcardSandboxManager.dispose()
+        await networkManager!.shutdown()
+        await networkManager!.initialize({
+          allowedDomains: ['example.com'],
+          deniedDomains: [],
+        })
       })
 
       it('should prevent creation of special file types that could bypass restrictions', async () => {
@@ -873,7 +891,7 @@ describe('Sandbox Integration Tests', () => {
         })
 
         // Test 1: FIFO (named pipe) creation in allowed location should work
-        const command1 = await SandboxManager.wrapWithSandbox(
+        const command1 = await sandboxManager!.wrapWithSandbox(
           `mkfifo ${fifoPath} && test -p ${fifoPath} && echo "FIFO created"`,
         )
 
@@ -889,7 +907,7 @@ describe('Sandbox Integration Tests', () => {
 
         // Test 2: Hard link pointing outside allowed location should fail
         // First create a file in allowed location
-        const command2a = await SandboxManager.wrapWithSandbox(
+        const command2a = await sandboxManager!.wrapWithSandbox(
           `echo "test content" > ${regularFile}`,
         )
 
@@ -900,7 +918,7 @@ describe('Sandbox Integration Tests', () => {
         })
 
         // Try to create hard link to /etc/passwd (outside allowed location)
-        const command2b = await SandboxManager.wrapWithSandbox(
+        const command2b = await sandboxManager!.wrapWithSandbox(
           `ln /etc/passwd ${hardlinkPath} 2>&1`,
         )
 
@@ -919,7 +937,7 @@ describe('Sandbox Integration Tests', () => {
         )
 
         // Test 3: Device node creation should fail (requires CAP_MKNOD which sandbox doesn't have)
-        const command3 = await SandboxManager.wrapWithSandbox(
+        const command3 = await sandboxManager!.wrapWithSandbox(
           `mknod ${devicePath} c 1 3 2>&1`,
         )
 
@@ -960,6 +978,8 @@ describe('Sandbox Integration Tests', () => {
  */
 describe('Empty allowedDomains Network Blocking Integration', () => {
   const TEST_DIR = join(process.cwd(), '.sandbox-test-empty-domains')
+  let emptyDomainsSandboxManager: SandboxManager | null = null
+  let originalNetworkManager: NetworkManager | null = null
 
   beforeAll(async () => {
     if (skipIfNotLinux()) {
@@ -970,6 +990,9 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
     if (!existsSync(TEST_DIR)) {
       mkdirSync(TEST_DIR, { recursive: true })
     }
+
+    // Save reference to shared NetworkManager
+    originalNetworkManager = sharedNetworkManager
   })
 
   afterAll(async () => {
@@ -982,7 +1005,19 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
 
-    await SandboxManager.reset()
+    // Cleanup instance
+    if (emptyDomainsSandboxManager) {
+      await emptyDomainsSandboxManager.dispose()
+    }
+
+    // Restore original network config
+    if (originalNetworkManager) {
+      await originalNetworkManager.shutdown()
+      await originalNetworkManager.initialize({
+        allowedDomains: ['example.com'],
+        deniedDomains: [],
+      })
+    }
   })
 
   describe('Network blocked with empty allowedDomains', () => {
@@ -991,19 +1026,25 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      // Initialize with empty allowedDomains - should block ALL network
-      await SandboxManager.reset()
-      await SandboxManager.initialize({
-        network: {
+      // Reconfigure existing NetworkManager with empty allowedDomains
+      if (originalNetworkManager) {
+        await originalNetworkManager.shutdown()
+        await originalNetworkManager.initialize({
           allowedDomains: [], // Empty = block all network (documented behavior)
           deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: [TEST_DIR],
-          denyWrite: [],
-        },
-      })
+        })
+
+        emptyDomainsSandboxManager = new SandboxManager(
+          originalNetworkManager,
+          {
+            filesystem: {
+              denyRead: [],
+              allowWrite: [TEST_DIR],
+              denyWrite: [],
+            },
+          },
+        )
+      }
     })
 
     it('should block all HTTP requests when allowedDomains is empty', async () => {
@@ -1012,7 +1053,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       }
 
       // Try to access example.com - should be blocked
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await emptyDomainsSandboxManager!.wrapWithSandbox(
         'curl -s --max-time 2 --connect-timeout 2 http://example.com 2>&1 || echo "network_failed"',
       )
 
@@ -1029,7 +1070,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       // Network should fail - either connection error, timeout, or "network_failed" echo
       const networkBlocked =
         output.includes('network_failed') ||
-        output.includes('couldn\'t connect') ||
+        output.includes("couldn't connect") ||
         output.includes('connection refused') ||
         output.includes('network is unreachable') ||
         output.includes('name or service not known') ||
@@ -1049,7 +1090,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await emptyDomainsSandboxManager!.wrapWithSandbox(
         'curl -s --max-time 2 --connect-timeout 2 https://example.com 2>&1 || echo "network_failed"',
       )
 
@@ -1064,7 +1105,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       // Network should fail
       const networkBlocked =
         output.includes('network_failed') ||
-        output.includes('couldn\'t connect') ||
+        output.includes("couldn't connect") ||
         output.includes('connection refused') ||
         output.includes('network is unreachable') ||
         output.includes('name or service not known') ||
@@ -1080,7 +1121,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       }
 
       // Try DNS lookup - should fail with no network
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await emptyDomainsSandboxManager!.wrapWithSandbox(
         'host example.com 2>&1 || nslookup example.com 2>&1 || echo "dns_failed"',
       )
 
@@ -1110,7 +1151,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await emptyDomainsSandboxManager!.wrapWithSandbox(
         'wget -q --timeout=2 -O - http://example.com 2>&1 || echo "wget_failed"',
       )
 
@@ -1142,7 +1183,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       const testFile = join(TEST_DIR, 'network-blocked-test.txt')
       const testContent = 'test content with network blocked'
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await emptyDomainsSandboxManager!.wrapWithSandbox(
         `echo "${testContent}" > ${testFile} && cat ${testFile}`,
       )
 
@@ -1164,24 +1205,39 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
   })
 
   describe('Network allowed with specific domains', () => {
+    let specificDomainsSandboxManager: SandboxManager
+
     beforeAll(async () => {
       if (skipIfNotLinux()) {
         return
       }
 
-      // Reinitialize with specific domain allowed
-      await SandboxManager.reset()
-      await SandboxManager.initialize({
-        network: {
+      // Reconfigure with specific domain allowed (same as main test config)
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
           allowedDomains: ['example.com'], // Only example.com allowed
           deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: [TEST_DIR],
-          denyWrite: [],
-        },
-      })
+        })
+
+        specificDomainsSandboxManager = new SandboxManager(
+          sharedNetworkManager,
+          {
+            filesystem: {
+              denyRead: [],
+              allowWrite: [TEST_DIR],
+              denyWrite: [],
+            },
+          },
+        )
+      }
+    })
+
+    afterAll(async () => {
+      if (skipIfNotLinux()) {
+        return
+      }
+      await specificDomainsSandboxManager?.dispose()
     })
 
     it('should allow HTTP to explicitly allowed domain', async () => {
@@ -1189,7 +1245,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await specificDomainsSandboxManager.wrapWithSandbox(
         'curl -s --max-time 5 http://example.com 2>&1',
       )
 
@@ -1209,7 +1265,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await specificDomainsSandboxManager.wrapWithSandbox(
         'curl -s --max-time 2 http://anthropic.com 2>&1',
       )
 
@@ -1231,12 +1287,16 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      await SandboxManager.reset()
-      await SandboxManager.initialize({
-        network: {
+      // Reconfigure shared NetworkManager
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
           allowedDomains: [], // Explicitly empty
           deniedDomains: [],
-        },
+        })
+      }
+
+      const contrastSandboxManager = new SandboxManager(sharedNetworkManager!, {
         filesystem: {
           denyRead: [],
           allowWrite: [TEST_DIR],
@@ -1244,7 +1304,7 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         },
       })
 
-      const command = await SandboxManager.wrapWithSandbox(
+      const command = await contrastSandboxManager.wrapWithSandbox(
         'curl -s --max-time 2 http://example.com 2>&1 || echo "blocked"',
       )
 
@@ -1258,12 +1318,22 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       const output = (result.stdout + result.stderr).toLowerCase()
       const isBlocked =
         output.includes('blocked') ||
-        output.includes('couldn\'t connect') ||
+        output.includes("couldn't connect") ||
         output.includes('network is unreachable') ||
         result.status !== 0
 
       expect(isBlocked).toBe(true)
       expect(output).not.toContain('example domain')
+
+      // Cleanup and restore config
+      await contrastSandboxManager.dispose()
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
+          allowedDomains: ['example.com'],
+          deniedDomains: [],
+        })
+      }
     })
   })
 })

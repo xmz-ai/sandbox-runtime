@@ -13,7 +13,7 @@ export function logForDebugging(
   }
 
   const level = options?.level || 'info'
-  const prefix = '[SandboxDebug]'
+  const prefix = '[XMZ-AI-SandboxDebug]'
 
   // Always use stderr to avoid corrupting stdout JSON streams
   switch (level) {

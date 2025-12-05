@@ -174,12 +174,15 @@ export const EnvConfigSchema = z
   )
 
 /**
- * Main configuration schema for Sandbox Runtime validation
+ * Instance configuration schema for SandboxManager
+ * This includes per-worker configuration that varies between sandbox instances
  */
-export const SandboxRuntimeConfigSchema = z.object({
-  network: NetworkConfigSchema.describe('Network restrictions configuration'),
+export const SandboxInstanceConfigSchema = z.object({
   filesystem: FilesystemConfigSchema.describe(
     'Filesystem restrictions configuration',
+  ),
+  env: EnvConfigSchema.describe(
+    'Custom environment variables for sandboxed processes',
   ),
   ignoreViolations: IgnoreViolationsConfigSchema.optional().describe(
     'Optional configuration for ignoring specific violations',
@@ -201,9 +204,16 @@ export const SandboxRuntimeConfigSchema = z.object({
       'Maximum directory depth to search for dangerous files on Linux (default: 3). ' +
         'Higher values provide more protection but slower performance.',
     ),
-  env: EnvConfigSchema.describe(
-    'Custom environment variables for sandboxed processes',
-  ),
+})
+
+/**
+ * Options schema for SandboxManager constructor
+ */
+export const SandboxOptionsSchema = z.object({
+  enableLogMonitor: z
+    .boolean()
+    .optional()
+    .describe('Enable macOS sandbox log monitoring (default: false)'),
 })
 
 // Export inferred types
@@ -214,4 +224,5 @@ export type IgnoreViolationsConfig = z.infer<
 >
 export type RipgrepConfig = z.infer<typeof RipgrepConfigSchema>
 export type EnvConfig = z.infer<typeof EnvConfigSchema>
-export type SandboxRuntimeConfig = z.infer<typeof SandboxRuntimeConfigSchema>
+export type SandboxInstanceConfig = z.infer<typeof SandboxInstanceConfigSchema>
+export type SandboxOptions = z.infer<typeof SandboxOptionsSchema>

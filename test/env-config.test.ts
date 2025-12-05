@@ -1,8 +1,23 @@
 import { describe, test, expect } from 'bun:test'
 import {
-  SandboxRuntimeConfigSchema,
+  NetworkConfigSchema,
+  FilesystemConfigSchema,
+  IgnoreViolationsConfigSchema,
+  RipgrepConfigSchema,
   EnvConfigSchema,
 } from '../src/sandbox/sandbox-config.js'
+import { z } from 'zod'
+
+// Local schema for testing the legacy config format
+const SandboxRuntimeConfigSchema = z.object({
+  network: NetworkConfigSchema,
+  filesystem: FilesystemConfigSchema,
+  ignoreViolations: IgnoreViolationsConfigSchema.optional(),
+  enableWeakerNestedSandbox: z.boolean().optional(),
+  ripgrep: RipgrepConfigSchema.optional(),
+  mandatoryDenySearchDepth: z.number().int().min(1).max(10).optional(),
+  env: EnvConfigSchema.optional(),
+})
 
 describe('Environment Variables Config Validation', () => {
   test('should validate config with explicit env var values', () => {
