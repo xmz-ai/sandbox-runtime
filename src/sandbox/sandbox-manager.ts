@@ -46,6 +46,7 @@ export class SandboxManager {
   private logMonitorShutdown: (() => void) | undefined
   private ownsNetworkManager: boolean
   private networkInitialized = false
+  private pendingNetworkConfig?: NetworkConfig
 
   /**
    * Create a new SandboxManager
@@ -131,8 +132,6 @@ export class SandboxManager {
       logForDebugging('Started macOS sandbox log monitor')
     }
   }
-
-  private pendingNetworkConfig?: NetworkConfig
 
   /**
    * Initialize the sandbox (only needed in simple mode)
