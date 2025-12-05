@@ -2,14 +2,34 @@
 import { Command } from 'commander'
 import { SandboxManager } from './index.js'
 import {
-  SandboxRuntimeConfigSchema,
-  type SandboxRuntimeConfig,
+  NetworkConfigSchema,
+  FilesystemConfigSchema,
+  IgnoreViolationsConfigSchema,
+  RipgrepConfigSchema,
+  EnvConfigSchema,
 } from './sandbox/sandbox-config.js'
 import { spawn } from 'child_process'
 import { logForDebugging } from './utils/debug.js'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { z } from 'zod'
+
+/**
+ * Legacy runtime config schema for CLI backward compatibility
+ * This combines network and instance configs for the config file format
+ */
+const SandboxRuntimeConfigSchema = z.object({
+  network: NetworkConfigSchema,
+  filesystem: FilesystemConfigSchema,
+  ignoreViolations: IgnoreViolationsConfigSchema.optional(),
+  enableWeakerNestedSandbox: z.boolean().optional(),
+  ripgrep: RipgrepConfigSchema.optional(),
+  mandatoryDenySearchDepth: z.number().int().min(1).max(10).optional(),
+  env: EnvConfigSchema.optional(),
+})
+
+type SandboxRuntimeConfig = z.infer<typeof SandboxRuntimeConfigSchema>
 
 /**
  * Load and validate sandbox configuration from a file
@@ -87,7 +107,6 @@ async function main(): Promise<void> {
     )
     .version(process.env.npm_package_version || '1.0.0')
 
-  // Default command - run command in sandbox
   program
     .argument('<command...>', 'command to run in the sandbox')
     .option('-d, --debug', 'enable debug logging')
@@ -102,12 +121,10 @@ async function main(): Promise<void> {
         options: { debug?: boolean; settings?: string },
       ) => {
         try {
-          // Enable debug logging if requested
           if (options.debug) {
             process.env.DEBUG = 'true'
           }
 
-          // Load config from file
           const configPath = options.settings || getDefaultConfigPath()
           let runtimeConfig = loadConfig(configPath)
 
@@ -118,24 +135,19 @@ async function main(): Promise<void> {
             runtimeConfig = getDefaultConfig()
           }
 
-          // Initialize sandbox with config
-          logForDebugging('Initializing sandbox...')
-          await SandboxManager.initialize(runtimeConfig)
+          logForDebugging('Creating sandbox instance...')
+          const { network: _, ...instanceConfig } = runtimeConfig
+          const sandbox = new SandboxManager(
+            runtimeConfig.network,
+            instanceConfig,
+          )
+          await sandbox.initialize()
 
-          // Join command arguments into a single command string
           const command = commandArgs.join(' ')
           logForDebugging(`Original command: ${command}`)
 
-          logForDebugging(
-            JSON.stringify(
-              SandboxManager.getNetworkRestrictionConfig(),
-              null,
-              2,
-            ),
-          )
-
           // Wrap the command with sandbox restrictions
-          const sandboxedCommand = await SandboxManager.wrapWithSandbox(command)
+          const sandboxedCommand = await sandbox.wrapWithSandbox(command)
 
           // Execute the sandboxed command
           const child = spawn(sandboxedCommand, {
@@ -143,8 +155,14 @@ async function main(): Promise<void> {
             stdio: 'inherit',
           })
 
+          // Handle cleanup on completion
+          const cleanup = async () => {
+            await sandbox.dispose()
+          }
+
           // Handle process exit
-          child.on('exit', (code, signal) => {
+          child.on('exit', async (code, signal) => {
+            await cleanup()
             if (signal) {
               console.error(`Process killed by signal: ${signal}`)
               process.exit(1)
@@ -152,18 +170,21 @@ async function main(): Promise<void> {
             process.exit(code ?? 0)
           })
 
-          child.on('error', error => {
+          child.on('error', async error => {
+            await cleanup()
             console.error(`Failed to execute command: ${error.message}`)
             process.exit(1)
           })
 
           // Handle cleanup on interrupt
-          process.on('SIGINT', () => {
+          process.on('SIGINT', async () => {
             child.kill('SIGINT')
+            await cleanup()
           })
 
-          process.on('SIGTERM', () => {
+          process.on('SIGTERM', async () => {
             child.kill('SIGTERM')
+            await cleanup()
           })
         } catch (error) {
           console.error(

@@ -1,55 +1,57 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { NetworkManager } from '../../src/sandbox/network-manager.js'
 import { SandboxManager } from '../../src/sandbox/sandbox-manager.js'
-import type { SandboxRuntimeConfig } from '../../src/sandbox/sandbox-config.js'
 import { getPlatform } from '../../src/utils/platform.js'
 import { wrapCommandWithSandboxLinux } from '../../src/sandbox/linux-sandbox-utils.js'
 import { wrapCommandWithSandboxMacOS } from '../../src/sandbox/macos-sandbox-utils.js'
-
-/**
- * Create a test configuration with network access
- */
-function createTestConfig(): SandboxRuntimeConfig {
-  return {
-    network: {
-      allowedDomains: ['example.com', 'api.github.com'],
-      deniedDomains: [],
-    },
-    filesystem: {
-      denyRead: ['~/.ssh'],
-      allowWrite: ['.', '/tmp'],
-      denyWrite: ['.env'],
-    },
-  }
-}
 
 function skipIfUnsupportedPlatform(): boolean {
   const platform = getPlatform()
   return platform !== 'linux' && platform !== 'macos'
 }
 
-describe('wrapWithSandbox customConfig', () => {
+describe('wrapWithSandbox with different configurations', () => {
+  let networkManager: NetworkManager
+  let sandboxManager: SandboxManager
+
   beforeAll(async () => {
     if (skipIfUnsupportedPlatform()) {
       return
     }
-    await SandboxManager.initialize(createTestConfig())
+
+    // Initialize NetworkManager with some allowed domains
+    networkManager = new NetworkManager()
+    await networkManager.initialize({
+      allowedDomains: ['example.com', 'api.github.com'],
+      deniedDomains: [],
+    })
+
+    // Initialize SandboxManager with filesystem restrictions
+    sandboxManager = new SandboxManager(networkManager, {
+      filesystem: {
+        denyRead: ['~/.ssh'],
+        allowWrite: ['.', '/tmp'],
+        denyWrite: ['.env'],
+      },
+    })
   })
 
   afterAll(async () => {
     if (skipIfUnsupportedPlatform()) {
       return
     }
-    await SandboxManager.reset()
+    await sandboxManager?.dispose()
+    await networkManager?.shutdown()
   })
 
-  describe('without customConfig', () => {
-    it('uses main config values', async () => {
+  describe('basic usage', () => {
+    it('wraps command with configured restrictions', async () => {
       if (skipIfUnsupportedPlatform()) {
         return
       }
 
       const command = 'echo hello'
-      const wrapped = await SandboxManager.wrapWithSandbox(command)
+      const wrapped = await sandboxManager.wrapWithSandbox(command)
 
       // Should wrap the command (not return it as-is)
       expect(wrapped).not.toBe(command)
@@ -57,33 +59,38 @@ describe('wrapWithSandbox customConfig', () => {
     })
   })
 
-  describe('with customConfig filesystem overrides', () => {
-    it('uses custom allowWrite when provided', async () => {
+  describe('different configurations via different instances', () => {
+    it('can create instance with no write permissions', async () => {
       if (skipIfUnsupportedPlatform()) {
         return
       }
 
-      const command = 'echo hello'
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
+      // Create a restrictive instance with no writes allowed
+      const restrictiveSandbox = new SandboxManager(networkManager, {
         filesystem: {
           denyRead: [],
-          allowWrite: [], // Override to block all writes
+          allowWrite: [], // Block all writes
           denyWrite: [],
         },
       })
 
+      const command = 'echo hello'
+      const wrapped = await restrictiveSandbox.wrapWithSandbox(command)
+
       // Should still wrap the command
       expect(wrapped).not.toBe(command)
       expect(wrapped.length).toBeGreaterThan(command.length)
+
+      await restrictiveSandbox.dispose()
     })
 
-    it('uses custom denyRead when provided', async () => {
+    it('can create instance with custom denyRead', async () => {
       if (skipIfUnsupportedPlatform()) {
         return
       }
 
-      const command = 'cat /etc/passwd'
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
+      // Create instance blocking specific file
+      const customSandbox = new SandboxManager(networkManager, {
         filesystem: {
           denyRead: ['/etc/passwd'], // Block this specific file
           allowWrite: [],
@@ -91,120 +98,73 @@ describe('wrapWithSandbox customConfig', () => {
         },
       })
 
-      expect(wrapped).not.toBe(command)
-    })
-  })
+      const command = 'cat /etc/passwd'
+      const wrapped = await customSandbox.wrapWithSandbox(command)
 
-  describe('with customConfig network overrides', () => {
-    it('blocks network when allowedDomains is empty', async () => {
+      expect(wrapped).not.toBe(command)
+
+      await customSandbox.dispose()
+    })
+
+    it('can create instance with no network (empty allowedDomains)', async () => {
       if (skipIfUnsupportedPlatform()) {
         return
       }
 
-      const command = 'curl https://example.com'
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
-        network: {
-          allowedDomains: [], // Block all network
-          deniedDomains: [],
-        },
+      // Create NetworkManager with no allowed domains
+      const noNetworkManager = new NetworkManager()
+      await noNetworkManager.initialize({
+        allowedDomains: [], // Block all network
+        deniedDomains: [],
       })
 
-      // Should wrap but without proxy env vars when allowedDomains is empty
-      expect(wrapped).not.toBe(command)
-
-      // The wrapped command should not contain proxy port references
-      // when there are no allowed domains (no network access needed)
-      // Note: This is implementation-specific and may need adjustment
-    })
-
-    it('uses main config network when customConfig.network is undefined', async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-
-      const command = 'echo hello'
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
+      const noNetworkSandbox = new SandboxManager(noNetworkManager, {
         filesystem: {
           denyRead: [],
           allowWrite: [],
           denyWrite: [],
         },
-        // network is not provided, should use main config
       })
 
-      expect(wrapped).not.toBe(command)
-    })
-  })
+      const command = 'curl https://example.com'
+      const wrapped = await noNetworkSandbox.wrapWithSandbox(command)
 
-  describe('readonly mode simulation', () => {
-    it('can create a fully restricted sandbox config', async () => {
+      // Should wrap the command
+      expect(wrapped).not.toBe(command)
+
+      await noNetworkSandbox.dispose()
+      await noNetworkManager.shutdown()
+    })
+
+    it('can create readonly instance (no writes, no network)', async () => {
       if (skipIfUnsupportedPlatform()) {
         return
       }
 
-      const command = 'ls -la'
+      // Create fully restricted instance
+      const readonlyNetworkManager = new NetworkManager()
+      await readonlyNetworkManager.initialize({
+        allowedDomains: [], // Block all network
+        deniedDomains: [],
+      })
 
-      // This is what BashTool passes for readonly commands
-      const readonlyConfig = {
-        network: {
-          allowedDomains: [], // Block all network
-          deniedDomains: [],
-        },
+      const readonlySandbox = new SandboxManager(readonlyNetworkManager, {
         filesystem: {
           denyRead: [],
           allowWrite: [], // Block all writes
           denyWrite: [],
         },
-      }
+      })
 
-      const wrapped = await SandboxManager.wrapWithSandbox(
-        command,
-        undefined,
-        readonlyConfig,
-      )
+      const command = 'ls -la'
+      const wrapped = await readonlySandbox.wrapWithSandbox(command)
 
       // Should wrap the command with restrictions
       expect(wrapped).not.toBe(command)
       expect(wrapped.length).toBeGreaterThan(command.length)
-    })
-  })
 
-  describe('partial config merging', () => {
-    it('only overrides specified filesystem fields', async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-
-      const command = 'echo test'
-
-      // Only override allowWrite, should use main config for denyRead/denyWrite
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
-        filesystem: {
-          denyRead: [], // Override denyRead
-          allowWrite: ['/custom/path'], // Override allowWrite
-          denyWrite: [], // Override denyWrite
-        },
-      })
-
-      expect(wrapped).not.toBe(command)
-    })
-
-    it('only overrides specified network fields', async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-
-      const command = 'echo test'
-
-      // Only override allowedDomains
-      const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, {
-        network: {
-          allowedDomains: ['custom.example.com'],
-          deniedDomains: [],
-        },
-      })
-
-      expect(wrapped).not.toBe(command)
+      await readonlySandbox.dispose()
+      await readonlyNetworkManager.shutdown()
     })
   })
 })
@@ -536,118 +496,95 @@ describe('restriction pattern semantics', () => {
 describe('empty allowedDomains network blocking (CVE fix)', () => {
   const command = 'curl https://example.com'
 
-  describe('SandboxManager.wrapWithSandbox with empty allowedDomains', () => {
-    beforeAll(async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-      // Initialize with domains so proxy starts, then test with empty customConfig
-      await SandboxManager.initialize({
-        network: {
-          allowedDomains: ['example.com'],
-          deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: ['/tmp'],
-          denyWrite: [],
-        },
-      })
+  it('empty allowedDomains triggers network restriction on Linux', async () => {
+    if (getPlatform() !== 'linux') {
+      return
+    }
+
+    // Create NetworkManager with empty allowedDomains
+    const emptyNetworkManager = new NetworkManager()
+    await emptyNetworkManager.initialize({
+      allowedDomains: [], // Empty = block all network (documented behavior)
+      deniedDomains: [],
     })
 
-    afterAll(async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-      await SandboxManager.reset()
+    const emptySandbox = new SandboxManager(emptyNetworkManager, {
+      filesystem: {
+        denyRead: [],
+        allowWrite: ['/tmp'],
+        denyWrite: [],
+      },
     })
 
-    it('empty allowedDomains in customConfig triggers network restriction on Linux', async () => {
-      if (getPlatform() !== 'linux') {
-        return
-      }
+    const result = await emptySandbox.wrapWithSandbox(command)
 
-      const result = await SandboxManager.wrapWithSandbox(command, undefined, {
-        network: {
-          allowedDomains: [], // Empty = block all network (documented behavior)
-          deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: ['/tmp'],
-          denyWrite: [],
-        },
-      })
+    // With the fix, empty allowedDomains should trigger network isolation
+    expect(result).not.toBe(command)
+    expect(result).toContain('bwrap')
+    expect(result).toContain('--unshare-net')
 
-      // With the fix, empty allowedDomains should trigger network isolation
-      expect(result).not.toBe(command)
-      expect(result).toContain('bwrap')
-      expect(result).toContain('--unshare-net')
+    await emptySandbox.dispose()
+    await emptyNetworkManager.shutdown()
+  })
+
+  it('empty allowedDomains triggers network restriction on macOS', async () => {
+    if (getPlatform() !== 'macos') {
+      return
+    }
+
+    // Create NetworkManager with empty allowedDomains
+    const emptyNetworkManager = new NetworkManager()
+    await emptyNetworkManager.initialize({
+      allowedDomains: [], // Empty = block all network (documented behavior)
+      deniedDomains: [],
     })
 
-    it('empty allowedDomains in customConfig triggers network restriction on macOS', async () => {
-      if (getPlatform() !== 'macos') {
-        return
-      }
-
-      const result = await SandboxManager.wrapWithSandbox(command, undefined, {
-        network: {
-          allowedDomains: [], // Empty = block all network (documented behavior)
-          deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: ['/tmp'],
-          denyWrite: [],
-        },
-      })
-
-      // With the fix, empty allowedDomains should trigger sandbox
-      expect(result).not.toBe(command)
-      expect(result).toContain('sandbox-exec')
+    const emptySandbox = new SandboxManager(emptyNetworkManager, {
+      filesystem: {
+        denyRead: [],
+        allowWrite: ['/tmp'],
+        denyWrite: [],
+      },
     })
 
-    it('non-empty allowedDomains still works correctly', async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
+    const result = await emptySandbox.wrapWithSandbox(command)
 
-      const result = await SandboxManager.wrapWithSandbox(command, undefined, {
-        network: {
-          allowedDomains: ['example.com'], // Specific domain allowed
-          deniedDomains: [],
-        },
-        filesystem: {
-          denyRead: [],
-          allowWrite: ['/tmp'],
-          denyWrite: [],
-        },
-      })
+    // With the fix, empty allowedDomains should trigger sandbox
+    expect(result).not.toBe(command)
+    expect(result).toContain('sandbox-exec')
 
-      // Should still wrap with sandbox
-      expect(result).not.toBe(command)
-      // Should have proxy environment variables for filtering
-      expect(result).toContain('HTTP_PROXY')
+    await emptySandbox.dispose()
+    await emptyNetworkManager.shutdown()
+  })
+
+  it('non-empty allowedDomains still works correctly', async () => {
+    if (skipIfUnsupportedPlatform()) {
+      return
+    }
+
+    // Create NetworkManager with specific allowed domain
+    const allowedNetworkManager = new NetworkManager()
+    await allowedNetworkManager.initialize({
+      allowedDomains: ['example.com'], // Specific domain allowed
+      deniedDomains: [],
     })
 
-    it('undefined network config in customConfig falls back to main config', async () => {
-      if (skipIfUnsupportedPlatform()) {
-        return
-      }
-
-      const result = await SandboxManager.wrapWithSandbox(command, undefined, {
-        // No network config - should fall back to main config which has example.com
-        filesystem: {
-          denyRead: [],
-          allowWrite: ['/tmp'],
-          denyWrite: [],
-        },
-      })
-
-      // Should wrap with sandbox using main config's network settings
-      expect(result).not.toBe(command)
-      // Main config has example.com, so proxy should be set up
-      expect(result).toContain('HTTP_PROXY')
+    const allowedSandbox = new SandboxManager(allowedNetworkManager, {
+      filesystem: {
+        denyRead: [],
+        allowWrite: ['/tmp'],
+        denyWrite: [],
+      },
     })
+
+    const result = await allowedSandbox.wrapWithSandbox(command)
+
+    // Should still wrap with sandbox
+    expect(result).not.toBe(command)
+    // Should have proxy environment variables for filtering
+    expect(result).toContain('HTTP_PROXY')
+
+    await allowedSandbox.dispose()
+    await allowedNetworkManager.shutdown()
   })
 })

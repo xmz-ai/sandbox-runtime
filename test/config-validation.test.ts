@@ -1,5 +1,23 @@
 import { describe, test, expect } from 'bun:test'
-import { SandboxRuntimeConfigSchema } from '../src/sandbox/sandbox-config.js'
+import {
+  NetworkConfigSchema,
+  FilesystemConfigSchema,
+  IgnoreViolationsConfigSchema,
+  RipgrepConfigSchema,
+  EnvConfigSchema,
+} from '../src/sandbox/sandbox-config.js'
+import { z } from 'zod'
+
+// Local schema for testing the legacy config format
+const SandboxRuntimeConfigSchema = z.object({
+  network: NetworkConfigSchema,
+  filesystem: FilesystemConfigSchema,
+  ignoreViolations: IgnoreViolationsConfigSchema.optional(),
+  enableWeakerNestedSandbox: z.boolean().optional(),
+  ripgrep: RipgrepConfigSchema.optional(),
+  mandatoryDenySearchDepth: z.number().int().min(1).max(10).optional(),
+  env: EnvConfigSchema.optional(),
+})
 
 describe('Config Validation', () => {
   test('should validate a valid minimal config', () => {
@@ -127,16 +145,12 @@ describe('Config Validation', () => {
   })
 
   test('should validate wildcard domains correctly', () => {
-    const validWildcards = [
-      '*.example.com',
-      '*.github.io',
-      '*.co.uk',
-    ]
+    const validWildcards = ['*.example.com', '*.github.io', '*.co.uk']
 
     const invalidWildcards = [
-      '*example.com',  // Missing dot after asterisk
-      '*.com',         // No subdomain
-      '*.',            // Invalid format
+      '*example.com', // Missing dot after asterisk
+      '*.com', // No subdomain
+      '*.', // Invalid format
     ]
 
     for (const domain of validWildcards) {

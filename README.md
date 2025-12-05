@@ -174,50 +174,101 @@ srt --settings /path/to/srt-settings.json npm install
 
 ### As a library
 
+#### Simple mode (recommended for most use cases)
+
+For single-process applications or when you don't need to share network proxies:
+
 ```typescript
-import {
-  SandboxManager,
-  type SandboxRuntimeConfig,
-} from '@anthropic-ai/sandbox-runtime'
+import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { spawn } from 'child_process'
 
-// Define your sandbox configuration
-const config: SandboxRuntimeConfig = {
-  network: {
+// Create SandboxManager with network and filesystem configuration
+// SandboxManager will create and manage its own NetworkManager internally
+const sandbox = new SandboxManager(
+  // Network config
+  {
     allowedDomains: ['example.com', 'api.github.com'],
     deniedDomains: [],
   },
-  filesystem: {
-    denyRead: ['~/.ssh'],
-    allowWrite: ['.', '/tmp'],
-    denyWrite: ['.env'],
+  // Sandbox instance config
+  {
+    filesystem: {
+      denyRead: ['~/.ssh'],
+      allowWrite: ['.', '/tmp'],
+      denyWrite: ['.env'],
+    },
   },
-}
+)
 
-// Initialize the sandbox (starts proxy servers, etc.)
-await SandboxManager.initialize(config)
+// Initialize network proxies (required in simple mode)
+await sandbox.initialize()
 
 // Wrap a command with sandbox restrictions
-const sandboxedCommand = await SandboxManager.wrapWithSandbox(
-  'curl https://example.com',
-)
+const sandboxedCommand = await sandbox.wrapWithSandbox('curl https://example.com')
 
 // Execute the sandboxed command
 const child = spawn(sandboxedCommand, { shell: true, stdio: 'inherit' })
 
 // Handle exit
-child.on('exit', code => {
+child.on('exit', async (code) => {
   console.log(`Command exited with code ${code}`)
+
+  // Cleanup - automatically shuts down network proxies
+  await sandbox.dispose()
+})
+```
+
+#### Advanced mode: Multiple workers with shared network proxy
+
+For daemon processes that spawn multiple workers with different configurations but shared network filtering:
+
+```typescript
+import { NetworkManager, SandboxManager } from '@anthropic-ai/sandbox-runtime'
+
+// Create shared NetworkManager (used by all workers)
+const networkManager = new NetworkManager()
+await networkManager.initialize({
+  allowedDomains: ['github.com', '*.npmjs.org'],
+  deniedDomains: [],
 })
 
-// Cleanup when done (optional, happens automatically on process exit)
-await SandboxManager.reset()
+// Create Worker 1 with specific filesystem config
+const worker1Sandbox = new SandboxManager(networkManager, {
+  filesystem: {
+    allowWrite: ['/workspace/project1'],
+  },
+  env: {
+    NODE_ENV: 'development',
+  },
+})
+
+// Create Worker 2 with different filesystem config
+const worker2Sandbox = new SandboxManager(networkManager, {
+  filesystem: {
+    allowWrite: ['/workspace/project2'],
+  },
+  env: {
+    NODE_ENV: 'production',
+  },
+})
+
+// Each worker can execute commands with its own restrictions
+const cmd1 = await worker1Sandbox.wrapWithSandbox('npm install')
+const cmd2 = await worker2Sandbox.wrapWithSandbox('python build.py')
+
+// Cleanup - dispose workers first, then shutdown shared network
+worker1Sandbox.dispose()  // Does NOT shutdown network (not owned)
+worker2Sandbox.dispose()  // Does NOT shutdown network (not owned)
+await networkManager.shutdown()  // Manually shutdown shared network proxies
 ```
+
+**Key difference**: In advanced mode, `SandboxManager.dispose()` does NOT shutdown the shared `NetworkManager` - you must call `networkManager.shutdown()` manually when you're done.
 
 #### Available exports
 
 ```typescript
-// Main sandbox manager
+// Network and sandbox managers
+export { NetworkManager } from '@anthropic-ai/sandbox-runtime'
 export { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 
 // Violation tracking
@@ -225,14 +276,16 @@ export { SandboxViolationStore } from '@anthropic-ai/sandbox-runtime'
 
 // TypeScript types
 export type {
-  SandboxRuntimeConfig,
-  NetworkConfig,
+  NetworkConfig,             // Config for NetworkManager
+  SandboxInstanceConfig,     // Config for SandboxManager instances
+  SandboxOptions,            // Optional SandboxManager constructor options
   FilesystemConfig,
   IgnoreViolationsConfig,
   SandboxAskCallback,
   FsReadRestrictionConfig,
   FsWriteRestrictionConfig,
   NetworkRestrictionConfig,
+  NetworkContext,            // Network context (proxy ports, etc.)
 } from '@anthropic-ai/sandbox-runtime'
 ```
 
