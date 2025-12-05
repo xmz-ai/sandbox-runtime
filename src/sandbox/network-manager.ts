@@ -43,7 +43,7 @@ export class NetworkManager {
   private httpProxyServer: ReturnType<typeof createHttpProxyServer> | undefined
   private socksProxyServer: SocksProxyWrapper | undefined
   private networkContext: NetworkContext | undefined
-  private initializationPromise: Promise<NetworkContext> | undefined
+  private initializationPromise: Promise<NetworkContext | undefined> | undefined
   private cleanupRegistered = false
   private config: NetworkConfig | undefined
   private sandboxAskCallback: SandboxAskCallback | undefined
@@ -75,6 +75,19 @@ export class NetworkManager {
     // Initialize network infrastructure
     this.initializationPromise = (async () => {
       try {
+        // Only start proxies and bridges if we have domains to filter
+        // If allowedDomains is empty, we block ALL network (no proxy/bridge needed)
+        const needsProxy = config.allowedDomains.length > 0
+
+        if (!needsProxy) {
+          logForDebugging(
+            'Empty allowedDomains - network will be completely blocked (no proxy)',
+          )
+          // Return undefined context - signals "initialized but no proxy"
+          this.networkContext = undefined
+          return undefined
+        }
+
         // Conditionally start proxy servers based on config
         let httpProxyPort: number
         if (config.httpProxyPort !== undefined) {
