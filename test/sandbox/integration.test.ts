@@ -21,6 +21,9 @@ function skipIfNotLinux(): boolean {
   return getPlatform() !== 'linux'
 }
 
+// Shared NetworkManager for all integration tests to avoid resource contention on ARM64
+let sharedNetworkManager: NetworkManager | null = null
+
 // ============================================================================
 // Helper Function
 // ============================================================================
@@ -84,8 +87,12 @@ describe('Sandbox Integration Tests', () => {
       socketServer!.on('error', reject)
     })
 
-    // Initialize NetworkManager
-    networkManager = new NetworkManager()
+    // Initialize shared NetworkManager (create if first time, reuse otherwise)
+    if (!sharedNetworkManager) {
+      sharedNetworkManager = new NetworkManager()
+    }
+    networkManager = sharedNetworkManager
+
     await networkManager.initialize({
       allowedDomains: ['example.com'],
       deniedDomains: [],
@@ -782,23 +789,20 @@ describe('Sandbox Integration Tests', () => {
         }
 
         // Reset and reinitialize with wildcard pattern
-        // Create new NetworkManager with wildcard pattern
-        const wildcardNetworkManager = new NetworkManager()
-        await wildcardNetworkManager.initialize({
+        // Reuse existing NetworkManager but reconfigure it
+        await networkManager!.shutdown()
+        await networkManager!.initialize({
           allowedDomains: ['*.github.com', 'example.com'],
           deniedDomains: [],
         })
 
-        const wildcardSandboxManager = new SandboxManager(
-          wildcardNetworkManager,
-          {
-            filesystem: {
-              denyRead: [],
-              allowWrite: [],
-              denyWrite: [],
-            },
+        const wildcardSandboxManager = new SandboxManager(networkManager!, {
+          filesystem: {
+            denyRead: [],
+            allowWrite: [],
+            denyWrite: [],
           },
-        )
+        })
 
         // Test 1: Subdomain should match wildcard
         const command1 = await wildcardSandboxManager.wrapWithSandbox(
@@ -860,9 +864,13 @@ describe('Sandbox Integration Tests', () => {
         const output4 = result4.stdout.toLowerCase()
         expect(output4).toContain('blocked by network allowlist')
 
-        // Cleanup wildcard test instances
+        // Cleanup wildcard test instance and restore original config
         await wildcardSandboxManager.dispose()
-        await wildcardNetworkManager.shutdown()
+        await networkManager!.shutdown()
+        await networkManager!.initialize({
+          allowedDomains: ['example.com'],
+          deniedDomains: [],
+        })
       })
 
       it('should prevent creation of special file types that could bypass restrictions', async () => {
@@ -970,8 +978,8 @@ describe('Sandbox Integration Tests', () => {
  */
 describe('Empty allowedDomains Network Blocking Integration', () => {
   const TEST_DIR = join(process.cwd(), '.sandbox-test-empty-domains')
-  let emptyDomainsNetworkManager: NetworkManager | null = null
   let emptyDomainsSandboxManager: SandboxManager | null = null
+  let originalNetworkManager: NetworkManager | null = null
 
   beforeAll(async () => {
     if (skipIfNotLinux()) {
@@ -982,6 +990,9 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
     if (!existsSync(TEST_DIR)) {
       mkdirSync(TEST_DIR, { recursive: true })
     }
+
+    // Save reference to shared NetworkManager
+    originalNetworkManager = sharedNetworkManager
   })
 
   afterAll(async () => {
@@ -994,12 +1005,18 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
 
-    // Cleanup instances
+    // Cleanup instance
     if (emptyDomainsSandboxManager) {
       await emptyDomainsSandboxManager.dispose()
     }
-    if (emptyDomainsNetworkManager) {
-      await emptyDomainsNetworkManager.shutdown()
+
+    // Restore original network config
+    if (originalNetworkManager) {
+      await originalNetworkManager.shutdown()
+      await originalNetworkManager.initialize({
+        allowedDomains: ['example.com'],
+        deniedDomains: [],
+      })
     }
   })
 
@@ -1009,23 +1026,25 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      // Initialize with empty allowedDomains - should block ALL network
-      emptyDomainsNetworkManager = new NetworkManager()
-      await emptyDomainsNetworkManager.initialize({
-        allowedDomains: [], // Empty = block all network (documented behavior)
-        deniedDomains: [],
-      })
+      // Reconfigure existing NetworkManager with empty allowedDomains
+      if (originalNetworkManager) {
+        await originalNetworkManager.shutdown()
+        await originalNetworkManager.initialize({
+          allowedDomains: [], // Empty = block all network (documented behavior)
+          deniedDomains: [],
+        })
 
-      emptyDomainsSandboxManager = new SandboxManager(
-        emptyDomainsNetworkManager,
-        {
-          filesystem: {
-            denyRead: [],
-            allowWrite: [TEST_DIR],
-            denyWrite: [],
+        emptyDomainsSandboxManager = new SandboxManager(
+          originalNetworkManager,
+          {
+            filesystem: {
+              denyRead: [],
+              allowWrite: [TEST_DIR],
+              denyWrite: [],
+            },
           },
-        },
-      )
+        )
+      }
     })
 
     it('should block all HTTP requests when allowedDomains is empty', async () => {
@@ -1186,7 +1205,6 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
   })
 
   describe('Network allowed with specific domains', () => {
-    let specificDomainsNetworkManager: NetworkManager
     let specificDomainsSandboxManager: SandboxManager
 
     beforeAll(async () => {
@@ -1194,23 +1212,25 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      // Reinitialize with specific domain allowed
-      specificDomainsNetworkManager = new NetworkManager()
-      await specificDomainsNetworkManager.initialize({
-        allowedDomains: ['example.com'], // Only example.com allowed
-        deniedDomains: [],
-      })
+      // Reconfigure with specific domain allowed (same as main test config)
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
+          allowedDomains: ['example.com'], // Only example.com allowed
+          deniedDomains: [],
+        })
 
-      specificDomainsSandboxManager = new SandboxManager(
-        specificDomainsNetworkManager,
-        {
-          filesystem: {
-            denyRead: [],
-            allowWrite: [TEST_DIR],
-            denyWrite: [],
+        specificDomainsSandboxManager = new SandboxManager(
+          sharedNetworkManager,
+          {
+            filesystem: {
+              denyRead: [],
+              allowWrite: [TEST_DIR],
+              denyWrite: [],
+            },
           },
-        },
-      )
+        )
+      }
     })
 
     afterAll(async () => {
@@ -1218,7 +1238,6 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
       await specificDomainsSandboxManager?.dispose()
-      await specificDomainsNetworkManager?.shutdown()
     })
 
     it('should allow HTTP to explicitly allowed domain', async () => {
@@ -1268,22 +1287,22 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
         return
       }
 
-      const contrastNetworkManager = new NetworkManager()
-      await contrastNetworkManager.initialize({
-        allowedDomains: [], // Explicitly empty
-        deniedDomains: [],
-      })
+      // Reconfigure shared NetworkManager
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
+          allowedDomains: [], // Explicitly empty
+          deniedDomains: [],
+        })
+      }
 
-      const contrastSandboxManager = new SandboxManager(
-        contrastNetworkManager,
-        {
-          filesystem: {
-            denyRead: [],
-            allowWrite: [TEST_DIR],
-            denyWrite: [],
-          },
+      const contrastSandboxManager = new SandboxManager(sharedNetworkManager!, {
+        filesystem: {
+          denyRead: [],
+          allowWrite: [TEST_DIR],
+          denyWrite: [],
         },
-      )
+      })
 
       const command = await contrastSandboxManager.wrapWithSandbox(
         'curl -s --max-time 2 http://example.com 2>&1 || echo "blocked"',
@@ -1306,9 +1325,15 @@ describe('Empty allowedDomains Network Blocking Integration', () => {
       expect(isBlocked).toBe(true)
       expect(output).not.toContain('example domain')
 
-      // Cleanup
+      // Cleanup and restore config
       await contrastSandboxManager.dispose()
-      await contrastNetworkManager.shutdown()
+      if (sharedNetworkManager) {
+        await sharedNetworkManager.shutdown()
+        await sharedNetworkManager.initialize({
+          allowedDomains: ['example.com'],
+          deniedDomains: [],
+        })
+      }
     })
   })
 })
