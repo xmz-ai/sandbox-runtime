@@ -122,7 +122,7 @@ async function main(): Promise<void> {
       ) => {
         try {
           if (options.debug) {
-            process.env.DEBUG = 'true'
+            process.env.SRT_DEBUG = 'true'
           }
 
           const configPath = options.settings || getDefaultConfigPath()
