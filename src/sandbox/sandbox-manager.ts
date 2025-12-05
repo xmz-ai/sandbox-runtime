@@ -202,9 +202,11 @@ export class SandboxManager {
     const allowedDomains = networkConfig?.allowedDomains ?? []
     const needsNetworkProxy = allowedDomains.length > 0
 
-    if (hasNetworkConfig && !networkContext) {
+    // Only error if we need a proxy but don't have the infrastructure
+    // (allowedDomains: [] is valid - no proxy needed, just block all network)
+    if (needsNetworkProxy && !networkContext) {
       throw new Error(
-        'NetworkManager must be initialized before wrapping commands that require network access',
+        'NetworkManager must have proxy infrastructure when allowedDomains is non-empty',
       )
     }
 

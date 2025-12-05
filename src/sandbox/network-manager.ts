@@ -47,6 +47,7 @@ export class NetworkManager {
   private cleanupRegistered = false
   private config: NetworkConfig | undefined
   private sandboxAskCallback: SandboxAskCallback | undefined
+  private initialized = false
 
   constructor() {
     // Public constructor - users instantiate as needed
@@ -142,6 +143,7 @@ export class NetworkManager {
     })()
 
     await this.initializationPromise
+    this.initialized = true
   }
 
   /**
@@ -307,13 +309,14 @@ export class NetworkManager {
     this.socksProxyServer = undefined
     this.networkContext = undefined
     this.initializationPromise = undefined
+    this.initialized = false
   }
 
   /**
    * Check if the network manager is initialized
    */
   isInitialized(): boolean {
-    return this.networkContext !== undefined
+    return this.initialized
   }
 
   /**
