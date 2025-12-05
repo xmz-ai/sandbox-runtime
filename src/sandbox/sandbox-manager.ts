@@ -231,6 +231,7 @@ export class SandboxManager {
           allowAllUnixSockets: networkConfig?.allowAllUnixSockets,
           allowLocalBinding: networkConfig?.allowLocalBinding,
           ignoreViolations: this.config.ignoreViolations,
+          allowPty: this.config.allowPty,
           binShell,
           envVars,
         })
