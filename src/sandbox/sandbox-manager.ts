@@ -193,10 +193,16 @@ export class SandboxManager {
     const networkConfig = this.networkManager.getConfig()
 
     // Determine if we need network restrictions
-    // If NetworkManager is initialized, we always apply network restrictions
-    // (even if allowedDomains is empty, which means block all network)
-    const needsNetwork = this.networkManager.isInitialized()
-    if (needsNetwork && !networkContext) {
+    // needsNetworkRestriction: true if network config exists (either allowed or denied domains)
+    const hasNetworkConfig = this.networkManager.isInitialized()
+    const needsNetworkRestriction = hasNetworkConfig
+
+    // needsNetworkProxy: Only use proxy if there are domains to filter
+    // If allowedDomains is empty, we block ALL network (no proxy needed - DNS will fail)
+    const allowedDomains = networkConfig?.allowedDomains ?? []
+    const needsNetworkProxy = allowedDomains.length > 0
+
+    if (hasNetworkConfig && !networkContext) {
       throw new Error(
         'NetworkManager must be initialized before wrapping commands that require network access',
       )
@@ -209,11 +215,12 @@ export class SandboxManager {
       case 'macos':
         return wrapCommandWithSandboxMacOS({
           command,
-          needsNetworkRestriction: needsNetwork,
-          httpProxyPort: needsNetwork
+          needsNetworkRestriction,
+          // Only pass proxy ports if we're actually filtering domains
+          httpProxyPort: needsNetworkProxy
             ? networkContext?.httpProxyPort
             : undefined,
-          socksProxyPort: needsNetwork
+          socksProxyPort: needsNetworkProxy
             ? networkContext?.socksProxyPort
             : undefined,
           readConfig,
@@ -229,17 +236,18 @@ export class SandboxManager {
       case 'linux':
         return wrapCommandWithSandboxLinux({
           command,
-          needsNetworkRestriction: needsNetwork,
-          httpSocketPath: needsNetwork
+          needsNetworkRestriction,
+          // Only pass proxy paths/ports if we're actually filtering domains
+          httpSocketPath: needsNetworkProxy
             ? networkContext?.linuxBridge?.httpSocketPath
             : undefined,
-          socksSocketPath: needsNetwork
+          socksSocketPath: needsNetworkProxy
             ? networkContext?.linuxBridge?.socksSocketPath
             : undefined,
-          httpProxyPort: needsNetwork
+          httpProxyPort: needsNetworkProxy
             ? networkContext?.httpProxyPort
             : undefined,
-          socksProxyPort: needsNetwork
+          socksProxyPort: needsNetworkProxy
             ? networkContext?.socksProxyPort
             : undefined,
           readConfig,
