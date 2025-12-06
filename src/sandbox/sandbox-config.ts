@@ -130,6 +130,14 @@ export const NetworkConfigSchema = z.object({
     .describe(
       'Port of an external SOCKS proxy to use instead of starting a local one. When provided, the library will skip starting its own SOCKS proxy and use this port. The external proxy must handle domain filtering.',
     ),
+  noProxyAddresses: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Additional addresses to exclude from proxy (e.g., ["example.internal", "192.168.0.0/16"]). ' +
+        'These are added to the mandatory addresses (localhost, 127.0.0.1, ::1, *.local, .local, 169.254.0.0/16). ' +
+        'Common use cases: private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), internal domains.',
+    ),
 })
 
 /**
@@ -242,6 +250,13 @@ export const SandboxInstanceConfigSchema = z.object({
     .optional()
     .describe(
       'Allow pseudo-terminal (pty) operations for tmux and other terminal multiplexers (macOS only)',
+    ),
+  tmpDir: z
+    .string()
+    .optional()
+    .describe(
+      'Custom temporary directory path for sandboxed processes (default: /tmp/xmz-ai-sandbox). ' +
+        'Must be an absolute path and not in sensitive locations.',
     ),
 })
 

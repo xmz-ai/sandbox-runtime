@@ -10,9 +10,12 @@ import { wrapCommandWithSandboxLinux } from '../../src/sandbox/linux-sandbox-uti
 /**
  * Integration tests for mandatory deny paths.
  *
- * These tests verify that dangerous files (.bashrc, .gitconfig, etc.) and
- * directories (.git/hooks, .vscode, etc.) are blocked from writes even when
- * they're within an allowed write path.
+ * These tests verify that git hooks and config (.git/hooks, .git/config)
+ * are blocked from writes even when they're within an allowed write path.
+ *
+ * NOTE: As of the latest changes, DANGEROUS_FILES and DANGEROUS_DIRECTORIES
+ * are no longer automatically protected. Users must explicitly configure denyWrite
+ * to protect files like .bashrc, .gitconfig, etc.
  *
  * IMPORTANT: The mandatory deny patterns are relative to process.cwd().
  * Tests must chdir to TEST_DIR before generating sandbox commands.
@@ -115,7 +118,7 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
     content: string,
   ): Promise<{ success: boolean; stderr: string }> {
     const platform = getPlatform()
-    const command = `echo '${content}' > '${filePath}'`
+    const command = `echo -n '${content}' > '${filePath}'`
 
     // Allow writes to current directory, but mandatory denies should still block dangerous files
     const writeConfig = {
@@ -152,86 +155,86 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
     }
   }
 
-  describe('Dangerous files should be blocked', () => {
-    it('blocks writes to .bashrc', async () => {
+  describe('Dangerous files are NO LONGER automatically blocked', () => {
+    it('allows writes to .bashrc (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.bashrc', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.bashrc', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.bashrc', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .gitconfig', async () => {
+    it('allows writes to .gitconfig (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.gitconfig', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.gitconfig', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.gitconfig', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .zshrc', async () => {
+    it('allows writes to .zshrc (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.zshrc', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.zshrc', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.zshrc', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .mcp.json', async () => {
+    it('allows writes to .mcp.json (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.mcp.json', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.mcp.json', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.mcp.json', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .bash_profile', async () => {
+    it('allows writes to .bash_profile (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.bash_profile', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.bash_profile', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.bash_profile', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .zprofile', async () => {
+    it('allows writes to .zprofile (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.zprofile', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.zprofile', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.zprofile', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .profile', async () => {
+    it('allows writes to .profile (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.profile', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.profile', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.profile', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .gitmodules', async () => {
+    it('allows writes to .gitmodules (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.gitmodules', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.gitmodules', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.gitmodules', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .ripgreprc', async () => {
+    it('allows writes to .ripgreprc (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.ripgreprc', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.ripgreprc', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.ripgreprc', 'utf8')).toBe(MODIFIED_CONTENT)
     })
   })
 
@@ -260,8 +263,8 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
     })
   })
 
-  describe('Dangerous directories should be blocked', () => {
-    it('blocks writes to .vscode/', async () => {
+  describe('Dangerous directories are NO LONGER automatically blocked', () => {
+    it('allows writes to .vscode/ (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite(
@@ -269,13 +272,13 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
         MODIFIED_CONTENT,
       )
 
-      expect(result.success).toBe(false)
+      expect(result.success).toBe(true)
       expect(readFileSync('.vscode/settings.json', 'utf8')).toBe(
-        ORIGINAL_CONTENT,
+        MODIFIED_CONTENT,
       )
     })
 
-    it('blocks writes to .claude/commands/', async () => {
+    it('allows writes to .claude/commands/ (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite(
@@ -283,13 +286,13 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
         MODIFIED_CONTENT,
       )
 
-      expect(result.success).toBe(false)
+      expect(result.success).toBe(true)
       expect(readFileSync('.claude/commands/test.md', 'utf8')).toBe(
-        ORIGINAL_CONTENT,
+        MODIFIED_CONTENT,
       )
     })
 
-    it('blocks writes to .claude/agents/', async () => {
+    it('allows writes to .claude/agents/ (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite(
@@ -297,13 +300,13 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
         MODIFIED_CONTENT,
       )
 
-      expect(result.success).toBe(false)
+      expect(result.success).toBe(true)
       expect(readFileSync('.claude/agents/test-agent.md', 'utf8')).toBe(
-        ORIGINAL_CONTENT,
+        MODIFIED_CONTENT,
       )
     })
 
-    it('blocks writes to .idea/', async () => {
+    it('allows writes to .idea/ (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite(
@@ -311,8 +314,8 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
         MODIFIED_CONTENT,
       )
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.idea/workspace.xml', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.idea/workspace.xml', 'utf8')).toBe(MODIFIED_CONTENT)
     })
   })
 

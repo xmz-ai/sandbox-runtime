@@ -11,8 +11,6 @@ import {
   generateProxyEnvVars,
   normalizePathForSandbox,
   normalizeCaseForComparison,
-  DANGEROUS_FILES,
-  getDangerousDirectories,
   RESERVED_ENV_VARS,
 } from './sandbox-utils.js'
 import type {
@@ -54,6 +52,10 @@ export interface LinuxSandboxParams {
   abortSignal?: AbortSignal
   /** Custom environment variables to set in the sandbox */
   envVars?: Array<{ name: string; value: string }>
+  /** Custom temporary directory path */
+  tmpDir?: string
+  /** Additional NO_PROXY addresses */
+  noProxyAddresses?: string[]
 }
 
 /** Default max depth for searching dangerous files */
@@ -73,27 +75,18 @@ async function linuxGetMandatoryDenyPaths(
   // Use provided signal or create a fallback controller
   const fallbackController = new AbortController()
   const signal = abortSignal ?? fallbackController.signal
-  const dangerousDirectories = getDangerousDirectories()
 
   // Note: Settings files are added at the callsite in sandbox-manager.ts
+  // Note: DANGEROUS_FILES and DANGEROUS_DIRECTORIES protection removed - users can now
+  // configure these via denyWrite if needed
   const denyPaths = [
-    // Dangerous files in CWD
-    ...DANGEROUS_FILES.map(f => path.resolve(cwd, f)),
-    // Dangerous directories in CWD
-    ...dangerousDirectories.map(d => path.resolve(cwd, d)),
     // Git paths in CWD
     path.resolve(cwd, '.git/hooks'),
     path.resolve(cwd, '.git/config'),
   ]
 
-  // Build iglob args for all patterns in one ripgrep call
+  // Build iglob args for git paths only
   const iglobArgs: string[] = []
-  for (const fileName of DANGEROUS_FILES) {
-    iglobArgs.push('--iglob', fileName)
-  }
-  for (const dirName of dangerousDirectories) {
-    iglobArgs.push('--iglob', `**/${dirName}/**`)
-  }
   // Git hooks and config in nested repos
   iglobArgs.push('--iglob', '**/.git/hooks/**')
   iglobArgs.push('--iglob', '**/.git/config')
@@ -121,38 +114,23 @@ async function linuxGetMandatoryDenyPaths(
     logForDebugging(`[Sandbox] ripgrep scan failed: ${error}`)
   }
 
-  // Process matches
+  // Process matches - only handling .git paths now
   for (const match of matches) {
     const absolutePath = path.resolve(cwd, match)
+    const segments = absolutePath.split(path.sep)
 
-    // File inside a dangerous directory -> add the directory path
-    let foundDir = false
-    for (const dirName of [...dangerousDirectories, '.git']) {
-      const normalizedDirName = normalizeCaseForComparison(dirName)
-      const segments = absolutePath.split(path.sep)
-      const dirIndex = segments.findIndex(
-        s => normalizeCaseForComparison(s) === normalizedDirName,
-      )
-      if (dirIndex !== -1) {
-        // For .git, we want hooks/ or config, not the whole .git dir
-        if (dirName === '.git') {
-          const gitDir = segments.slice(0, dirIndex + 1).join(path.sep)
-          if (match.includes('.git/hooks')) {
-            denyPaths.push(path.join(gitDir, 'hooks'))
-          } else if (match.includes('.git/config')) {
-            denyPaths.push(path.join(gitDir, 'config'))
-          }
-        } else {
-          denyPaths.push(segments.slice(0, dirIndex + 1).join(path.sep))
-        }
-        foundDir = true
-        break
+    // Look for .git directory
+    const gitIndex = segments.findIndex(
+      s => normalizeCaseForComparison(s) === '.git',
+    )
+
+    if (gitIndex !== -1) {
+      const gitDir = segments.slice(0, gitIndex + 1).join(path.sep)
+      if (match.includes('.git/hooks')) {
+        denyPaths.push(path.join(gitDir, 'hooks'))
+      } else if (match.includes('.git/config')) {
+        denyPaths.push(path.join(gitDir, 'config'))
       }
-    }
-
-    // Dangerous file match
-    if (!foundDir) {
-      denyPaths.push(absolutePath)
     }
   }
 
@@ -977,6 +955,10 @@ export async function wrapCommandWithSandboxLinux(
         const proxyEnv = generateProxyEnvVars(
           3128, // Internal HTTP listener port
           1080, // Internal SOCKS listener port
+          {
+            tmpDir: params.tmpDir,
+            noProxyAddresses: params.noProxyAddresses,
+          },
         )
         bwrapArgs.push(
           ...proxyEnv.flatMap((env: string) => {

@@ -4,28 +4,6 @@ import * as fs from 'fs'
 import { getPlatform } from '../utils/platform.js'
 
 /**
- * Dangerous files that should be protected from writes.
- * These files can be used for code execution or data exfiltration.
- */
-export const DANGEROUS_FILES = [
-  '.gitconfig',
-  '.gitmodules',
-  '.bashrc',
-  '.bash_profile',
-  '.zshrc',
-  '.zprofile',
-  '.profile',
-  '.ripgreprc',
-  '.mcp.json',
-] as const
-
-/**
- * Dangerous directories that should be protected from writes.
- * These directories contain sensitive configuration or executable files.
- */
-export const DANGEROUS_DIRECTORIES = ['.git', '.vscode', '.idea'] as const
-
-/**
  * Environment variables reserved by sandbox-runtime
  * These cannot be overridden by user configuration
  * Note: Matching is case-insensitive (names are uppercased before checking)
@@ -51,19 +29,6 @@ export const RESERVED_ENV_VARS = new Set([
   'SANDBOX_RUNTIME',
   'TMPDIR',
 ])
-
-/**
- * Get the list of dangerous directories to deny writes to.
- * Excludes .git since we need it writable for git operations -
- * instead we block specific paths within .git (hooks and config).
- */
-export function getDangerousDirectories(): string[] {
-  return [
-    ...DANGEROUS_DIRECTORIES.filter(d => d !== '.git'),
-    '.claude/commands',
-    '.claude/agents',
-  ]
-}
 
 /**
  * Normalizes a path for case-insensitive comparison.
@@ -170,26 +135,32 @@ export function normalizePathForSandbox(pathPattern: string): string {
 export function generateProxyEnvVars(
   httpProxyPort?: number,
   socksProxyPort?: number,
+  options?: {
+    tmpDir?: string
+    noProxyAddresses?: string[]
+  },
 ): string[] {
-  const envVars: string[] = [`SANDBOX_RUNTIME=1`, `TMPDIR=/tmp/xmz-ai-sandbox`]
+  const tmpDir = options?.tmpDir || '/tmp/xmz-ai-sandbox'
+  const envVars: string[] = [`SANDBOX_RUNTIME=1`, `TMPDIR=${tmpDir}`]
 
   // If no proxy ports provided, return minimal env vars
   if (!httpProxyPort && !socksProxyPort) {
     return envVars
   }
 
-  // Always set NO_PROXY to exclude localhost and private networks from proxying
-  const noProxyAddresses = [
+  // Build NO_PROXY list: mandatory localhost/link-local/mDNS + user-provided addresses
+  const mandatoryNoProxy = [
     'localhost',
     '127.0.0.1',
     '::1',
-    '*.local',
-    '.local',
-    '169.254.0.0/16', // Link-local
-    '10.0.0.0/8', // Private network
-    '172.16.0.0/12', // Private network
-    '192.168.0.0/16', // Private network
-  ].join(',')
+    '*.local', // mDNS/Bonjour
+    '.local', // mDNS/Bonjour base domain
+    '169.254.0.0/16', // Link-local addresses
+  ]
+  const userNoProxy = options?.noProxyAddresses || []
+
+  const noProxyAddresses = [...mandatoryNoProxy, ...userNoProxy].join(',')
+
   envVars.push(`NO_PROXY=${noProxyAddresses}`)
   envVars.push(`no_proxy=${noProxyAddresses}`)
   envVars.push(`GLOBAL_AGENT_NO_PROXY=${noProxyAddresses}`)

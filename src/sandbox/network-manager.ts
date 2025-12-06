@@ -31,6 +31,7 @@ export interface NetworkConfig {
   allowLocalBinding?: boolean
   httpProxyPort?: number
   socksProxyPort?: number
+  noProxyAddresses?: string[]
 }
 
 /**
