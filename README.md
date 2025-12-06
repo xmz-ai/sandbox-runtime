@@ -24,7 +24,7 @@ This fork introduces several major enhancements based on commit [9c0d868](https:
 - **Custom environment variables** ([e647549](https://github.com/xmz-ai/sandbox-runtime/commit/e647549)): Set or inherit environment variables in sandboxed processes
 - **Node.js global proxy** ([ccbe204](https://github.com/xmz-ai/sandbox-runtime/commit/ccbe204)): Automatic proxy configuration for Node.js HTTP clients via global-agent
 - **WebSocket support** ([2cc0632](https://github.com/xmz-ai/sandbox-runtime/commit/2cc0632)): Handle WebSocket upgrade requests in HTTP proxy
-- **Enhanced Linux security**: Improved mandatory deny paths with configurable search depth
+- **Linux glob pattern support**: Linux now supports glob patterns in filesystem paths (expanded via ripgrep at initialization)
 
 ### Bug Fixes
 
@@ -577,9 +577,9 @@ Uses flexible filtering modes with multiple pattern types.
 - `filesystem.allowWrite` - Array of paths to allow write access. Empty array = no write access.
 - `filesystem.denyWrite` - Array of paths to deny write access within allowed paths (takes precedence over allowWrite)
 
-**Path Syntax (macOS):**
+**Path Syntax (Both Platforms):**
 
-Paths support git-style glob patterns on macOS, similar to `.gitignore` syntax:
+Both macOS and Linux support git-style glob patterns, similar to `.gitignore` syntax:
 
 - `*` - Matches any characters except `/` (e.g., `*.ts` matches `foo.ts` but not `foo/bar.ts`)
 - `**` - Matches any characters including `/` (e.g., `src/**/*.ts` matches all `.ts` files in `src/`)
@@ -591,14 +591,15 @@ Examples:
 - `"allowWrite": ["src/"]` - Allow write to entire `src/` directory
 - `"allowWrite": ["src/**/*.ts"]` - Allow write to all `.ts` files in `src/` and subdirectories
 - `"denyRead": ["~/.ssh"]` - Deny read to SSH directory
-- `"denyWrite": [".env"]` - Deny write to `.env` file (even if current directory is allowed)
+- `"denyWrite": ["**/.env"]` - Deny write to all `.env` files recursively
 
-**Path Syntax (Linux):**
+**Platform Differences:**
 
-**Linux currently does not support glob matching.** Use literal paths only:
+- **macOS**: Uses regex matching in sandbox profiles. Glob patterns protect both existing files AND files created in the future during sandbox execution.
 
-- `"allowWrite": ["src/"]` - Allow write to `src/` directory
-- `"denyRead": ["/home/user/.ssh"]` - Deny read to SSH directory
+- **Linux**: Expands glob patterns at initialization time using ripgrep. Glob patterns only protect files that exist when the sandbox starts. Files created after initialization are NOT protected by the pattern.
+  - Use `mandatoryDenySearchDepth` (default: 3) to control how deep ripgrep searches for matching files
+  - Deeper searches provide better protection but may impact initialization performance
 
 **All platforms:**
 
@@ -863,49 +864,63 @@ Filesystem restrictions are enforced at the OS level:
 
 This model lets you start with broad read access but maximally restricted write access, then explicitly open the holes you need.
 
-### Mandatory Deny Paths (Auto-Protected Files)
+### Protecting Sensitive Files
 
-Certain sensitive files and directories are **always blocked from writes**, even if they fall within an allowed write path. This provides defense-in-depth against sandbox escapes and configuration tampering.
+The sandbox does NOT automatically protect any files - you have full control via the `denyWrite` configuration. However, you should consider protecting sensitive files that could lead to sandbox escapes or system compromise:
 
-**Always-blocked files:**
+**Recommended files to protect:**
 
-- Shell config files: `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`
-- Git config files: `.gitconfig`, `.gitmodules`
-- Other sensitive files: `.ripgreprc`, `.mcp.json`
+```json
+{
+  "filesystem": {
+    "allowWrite": ["."],
+    "denyWrite": [
+      "**/.bashrc",
+      "**/.bash_profile",
+      "**/.zshrc",
+      "**/.zprofile",
+      "**/.profile",
+      "**/.gitconfig",
+      "**/.gitmodules",
+      "**/.ripgreprc",
+      "**/.mcp.json",
+      "**/.git/hooks/**",
+      "**/.git/config",
+      "**/.vscode/**",
+      "**/.idea/**",
+      "**/.claude/commands/**",
+      "**/.claude/agents/**"
+    ]
+  }
+}
+```
 
-**Always-blocked directories:**
-
-- IDE directories: `.vscode/`, `.idea/`
-- Claude config directories: `.claude/commands/`, `.claude/agents/`
-- Git hooks and config: `.git/hooks/`, `.git/config`
-
-These paths are blocked automatically - you don't need to add them to `denyWrite`. For example, even with `allowWrite: ["."]`, writing to `.bashrc` or `.git/hooks/pre-commit` will fail:
+Using glob patterns (like `**/.bashrc`) protects these files anywhere in your project:
 
 ```bash
 $ srt 'echo "malicious" >> .bashrc'
 /bin/bash: .bashrc: Operation not permitted
 
-$ srt 'echo "bad" > .git/hooks/pre-commit'
-/bin/bash: .git/hooks/pre-commit: Operation not permitted
+$ srt 'echo "bad" > src/.git/hooks/pre-commit'
+/bin/bash: src/.git/hooks/pre-commit: Operation not permitted
 ```
 
-**Note (Linux):** On Linux, mandatory deny paths only block files that already exist. Non-existent files in these patterns cannot be blocked by bubblewrap's bind-mount approach. macOS uses glob patterns which block both existing and new files.
-
-**Linux search depth:** On Linux, the sandbox uses `ripgrep` to scan for dangerous files in subdirectories within allowed write paths. By default, it searches up to 3 levels deep for performance. You can configure this with `mandatoryDenySearchDepth`:
+**Search depth for glob patterns (Linux only):** On Linux, glob patterns are expanded at initialization using ripgrep. By default, it searches up to 3 directory levels deep for performance. You can configure this with `mandatoryDenySearchDepth`:
 
 ```json
 {
   "mandatoryDenySearchDepth": 5,
   "filesystem": {
-    "allowWrite": ["."]
+    "allowWrite": ["."],
+    "denyWrite": ["**/.env*"]
   }
 }
 ```
 
-- Default: `3` (searches up to 3 levels deep)
+- Default: `3` (searches 3 levels deep: `./`, `./foo/`, `./foo/bar/`)
 - Range: `1` to `10`
-- Higher values provide more protection but slower performance
-- Files in CWD (depth 0) are always protected regardless of this setting
+- Higher values provide more protection but may slow initialization
+- This setting only affects Linux glob expansion; macOS uses regex matching with no depth limit
 
 ### Unix Socket Restrictions (Linux)
 
