@@ -238,17 +238,17 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
     })
   })
 
-  describe('Git hooks and config should be blocked', () => {
-    it('blocks writes to .git/config', async () => {
+  describe('Git hooks and config are NO LONGER automatically blocked', () => {
+    it('allows writes to .git/config (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite('.git/config', MODIFIED_CONTENT)
 
-      expect(result.success).toBe(false)
-      expect(readFileSync('.git/config', 'utf8')).toBe(ORIGINAL_CONTENT)
+      expect(result.success).toBe(true)
+      expect(readFileSync('.git/config', 'utf8')).toBe(MODIFIED_CONTENT)
     })
 
-    it('blocks writes to .git/hooks/pre-commit', async () => {
+    it('allows writes to .git/hooks/pre-commit (user must explicitly deny via denyWrite)', async () => {
       if (skipIfUnsupportedPlatform()) return
 
       const result = await runSandboxedWrite(
@@ -256,9 +256,9 @@ describe('Mandatory Deny Paths - Integration Tests', () => {
         MODIFIED_CONTENT,
       )
 
-      expect(result.success).toBe(false)
+      expect(result.success).toBe(true)
       expect(readFileSync('.git/hooks/pre-commit', 'utf8')).toBe(
-        ORIGINAL_CONTENT,
+        MODIFIED_CONTENT,
       )
     })
   })

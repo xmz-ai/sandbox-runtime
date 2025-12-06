@@ -312,7 +312,11 @@ export function matchesDomainPattern(
 
 /**
  * Normalize and filter paths for sandbox configuration.
- * Removes trailing glob suffixes and filters out unsupported glob patterns on Linux.
+ * Removes trailing glob suffixes (/** at the end).
+ *
+ * NOTE: Glob patterns are now supported on both platforms:
+ * - macOS: Uses regex matching in sandbox profiles (protects future files)
+ * - Linux: Expands globs at config time via ripgrep (only existing files)
  *
  * @param paths The paths to normalize and filter
  * @param platform The platform to normalize for
@@ -320,19 +324,9 @@ export function matchesDomainPattern(
  */
 export function normalizeAndFilterPaths(
   paths: string[],
-  platform: 'macos' | 'linux' | 'unknown',
+  _platform: 'macos' | 'linux' | 'unknown',
 ): string[] {
-  return paths
-    ? paths
-        .map(path => removeTrailingGlobSuffix(path))
-        .filter(path => {
-          if (platform === 'linux' && containsGlobChars(path)) {
-            // Skip glob patterns on Linux as they're not fully supported
-            return false
-          }
-          return true
-        })
-    : []
+  return paths ? paths.map(path => removeTrailingGlobSuffix(path)) : []
 }
 
 /**

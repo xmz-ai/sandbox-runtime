@@ -10,8 +10,8 @@ import { ripGrep } from '../utils/ripgrep.js'
 import {
   generateProxyEnvVars,
   normalizePathForSandbox,
-  normalizeCaseForComparison,
   RESERVED_ENV_VARS,
+  containsGlobChars,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -62,79 +62,96 @@ export interface LinuxSandboxParams {
 const DEFAULT_MANDATORY_DENY_SEARCH_DEPTH = 3
 
 /**
- * Get mandatory deny paths using ripgrep (Linux only).
- * Uses a SINGLE ripgrep call with multiple glob patterns for efficiency.
- * With --max-depth limiting, this is fast enough to run on each command without memoization.
+ * Get mandatory deny paths (Linux only).
+ *
+ * NOTE: This function previously protected .git/hooks and .git/config automatically.
+ * As of the latest changes, all automatic file protection has been removed to give
+ * users full control. Users should use denyWrite configuration to protect sensitive
+ * files if needed.
+ *
+ * This function is kept for backward compatibility but now returns an empty array.
+ * It may be removed entirely in a future version.
  */
 async function linuxGetMandatoryDenyPaths(
+  _ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
+  _maxDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
+  _abortSignal?: AbortSignal,
+): Promise<string[]> {
+  // All automatic file protection removed - users have full control via denyWrite
+  return []
+}
+
+/**
+ * Expand glob patterns to concrete file paths using ripgrep.
+ *
+ * IMPORTANT: This only expands to files that exist at the time of expansion.
+ * Unlike macOS which uses regex matching in sandbox profiles, Linux's bwrap
+ * requires concrete paths for bind mounts. This means:
+ * - Files created AFTER expansion will NOT be protected
+ * - macOS protects both existing and future files matching the pattern
+ *
+ * @param patterns Array of paths (can include globs like '**\/*.env')
+ * @param ripgrepConfig Ripgrep configuration
+ * @param maxDepth Maximum directory depth to search (default: unlimited)
+ * @param abortSignal Abort signal for cancellation
+ * @returns Array of concrete file paths (globs expanded, literals preserved)
+ */
+async function expandGlobPatterns(
+  patterns: string[],
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
-  maxDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
+  maxDepth?: number,
   abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const cwd = process.cwd()
-  // Use provided signal or create a fallback controller
-  const fallbackController = new AbortController()
-  const signal = abortSignal ?? fallbackController.signal
+  const expandedPaths: string[] = []
 
-  // Note: Settings files are added at the callsite in sandbox-manager.ts
-  // Note: DANGEROUS_FILES and DANGEROUS_DIRECTORIES protection removed - users can now
-  // configure these via denyWrite if needed
-  const denyPaths = [
-    // Git paths in CWD
-    path.resolve(cwd, '.git/hooks'),
-    path.resolve(cwd, '.git/config'),
-  ]
+  for (const pattern of patterns) {
+    const normalizedPattern = normalizePathForSandbox(pattern)
 
-  // Build iglob args for git paths only
-  const iglobArgs: string[] = []
-  // Git hooks and config in nested repos
-  iglobArgs.push('--iglob', '**/.git/hooks/**')
-  iglobArgs.push('--iglob', '**/.git/config')
+    if (containsGlobChars(normalizedPattern)) {
+      // Expand glob pattern using ripgrep
+      try {
+        const ripgrepArgs = [
+          '--files',
+          '--hidden',
+          '-g',
+          normalizedPattern,
+          '-g',
+          '!**/node_modules/**', // Always exclude node_modules
+        ]
 
-  // Single ripgrep call to find all dangerous paths in subdirectories
-  // Limit depth for performance - deeply nested dangerous files are rare
-  // and the security benefit doesn't justify the traversal cost
-  let matches: string[] = []
-  try {
-    matches = await ripGrep(
-      [
-        '--files',
-        '--hidden',
-        '--max-depth',
-        String(maxDepth),
-        ...iglobArgs,
-        '-g',
-        '!**/node_modules/**',
-      ],
-      cwd,
-      signal,
-      ripgrepConfig,
-    )
-  } catch (error) {
-    logForDebugging(`[Sandbox] ripgrep scan failed: ${error}`)
-  }
+        // Add max depth if specified
+        if (maxDepth !== undefined) {
+          ripgrepArgs.push('--max-depth', String(maxDepth))
+        }
 
-  // Process matches - only handling .git paths now
-  for (const match of matches) {
-    const absolutePath = path.resolve(cwd, match)
-    const segments = absolutePath.split(path.sep)
+        const matches = await ripGrep(
+          ripgrepArgs,
+          cwd,
+          abortSignal ?? new AbortController().signal,
+          ripgrepConfig,
+        )
 
-    // Look for .git directory
-    const gitIndex = segments.findIndex(
-      s => normalizeCaseForComparison(s) === '.git',
-    )
+        // Convert relative paths to absolute
+        const absolutePaths = matches.map(m => path.resolve(cwd, m))
+        expandedPaths.push(...absolutePaths)
 
-    if (gitIndex !== -1) {
-      const gitDir = segments.slice(0, gitIndex + 1).join(path.sep)
-      if (match.includes('.git/hooks')) {
-        denyPaths.push(path.join(gitDir, 'hooks'))
-      } else if (match.includes('.git/config')) {
-        denyPaths.push(path.join(gitDir, 'config'))
+        logForDebugging(
+          `[Sandbox Linux] Expanded glob '${pattern}' to ${absolutePaths.length} paths`,
+        )
+      } catch (error) {
+        logForDebugging(
+          `[Sandbox Linux] Failed to expand glob '${pattern}': ${error}`,
+          { level: 'warn' },
+        )
       }
+    } else {
+      // Literal path - keep as is
+      expandedPaths.push(normalizedPattern)
     }
   }
 
-  return [...new Set(denyPaths)]
+  return expandedPaths
 }
 
 // Track generated seccomp filters for cleanup on process exit
@@ -442,8 +459,16 @@ async function generateDenyOnlyFilesystemArgs(
     // Collect normalized allowed write paths for later checking
     const allowedWritePaths: string[] = []
 
+    // Expand globs in allowWrite paths
+    const expandedAllowWrite = await expandGlobPatterns(
+      writeConfig.allowOnly || [],
+      ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
+    )
+
     // Allow writes to specific paths
-    for (const pathPattern of writeConfig.allowOnly || []) {
+    for (const pathPattern of expandedAllowWrite) {
       const normalizedPath = normalizePathForSandbox(pathPattern)
 
       logForDebugging(
@@ -468,7 +493,7 @@ async function generateDenyOnlyFilesystemArgs(
     }
 
     // Deny writes within allowed paths (user-specified + mandatory denies)
-    const denyPathsForWrite = [
+    const denyWithinAllowPatterns = [
       ...(writeConfig.denyWithinAllow || []),
       ...(await linuxGetMandatoryDenyPaths(
         ripgrepConfig,
@@ -477,7 +502,15 @@ async function generateDenyOnlyFilesystemArgs(
       )),
     ]
 
-    for (const pathPattern of denyPathsForWrite) {
+    // Expand globs in denyWithinAllow paths
+    const expandedDenyWrite = await expandGlobPatterns(
+      denyWithinAllowPatterns,
+      ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
+    )
+
+    for (const pathPattern of expandedDenyWrite) {
       const normalizedPath = normalizePathForSandbox(pathPattern)
 
       // Skip /dev/* paths since --dev /dev already handles them
@@ -515,16 +548,24 @@ async function generateDenyOnlyFilesystemArgs(
   }
 
   // Handle read restrictions by mounting tmpfs over denied paths
-  const readDenyPaths = [...denyPaths]
+  const readDenyPatterns = [...denyPaths]
 
   // Always hide /etc/ssh/ssh_config.d to avoid permission issues with OrbStack
   // SSH is very strict about config file permissions and ownership, and they can
   // appear wrong inside the sandbox causing "Bad owner or permissions" errors
   if (fs.existsSync('/etc/ssh/ssh_config.d')) {
-    readDenyPaths.push('/etc/ssh/ssh_config.d')
+    readDenyPatterns.push('/etc/ssh/ssh_config.d')
   }
 
-  for (const pathPattern of readDenyPaths) {
+  // Expand globs in read deny paths
+  const expandedReadDeny = await expandGlobPatterns(
+    readDenyPatterns,
+    ripgrepConfig,
+    mandatoryDenySearchDepth,
+    abortSignal,
+  )
+
+  for (const pathPattern of expandedReadDeny) {
     const normalizedPath = normalizePathForSandbox(pathPattern)
     if (!fs.existsSync(normalizedPath)) {
       logForDebugging(
@@ -606,7 +647,15 @@ async function generateAllowOnlyFilesystemArgs(
 
   // Step 1: Bind allowed read paths
   // These are the ONLY paths that will be readable in the sandbox
-  for (const pathPattern of allowPaths) {
+  // Expand globs in allowRead paths
+  const expandedAllowRead = await expandGlobPatterns(
+    allowPaths,
+    ripgrepConfig,
+    mandatoryDenySearchDepth,
+    abortSignal,
+  )
+
+  for (const pathPattern of expandedAllowRead) {
     const normalizedPath = normalizePathForSandbox(pathPattern)
 
     if (!fs.existsSync(normalizedPath)) {
@@ -634,12 +683,20 @@ async function generateAllowOnlyFilesystemArgs(
   // Step 2: Handle write-only paths (paths that are writable but not explicitly in allowRead)
   // These paths need to be bound if they exist
   if (writeConfig?.allowOnly) {
-    for (const pathPattern of writeConfig.allowOnly) {
+    // Expand globs in allowWrite paths
+    const expandedAllowWrite = await expandGlobPatterns(
+      writeConfig.allowOnly,
+      ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
+    )
+
+    for (const pathPattern of expandedAllowWrite) {
       const normalizedPath = normalizePathForSandbox(pathPattern)
 
       // Skip if already handled in allowRead
       if (
-        allowPaths.some(
+        expandedAllowRead.some(
           readPath => normalizePathForSandbox(readPath) === normalizedPath,
         )
       ) {
@@ -661,7 +718,7 @@ async function generateAllowOnlyFilesystemArgs(
   // This handles writeConfig.denyWithinAllow - files that should be read-only even within writable directories
   if (writeConfig?.denyWithinAllow || writeConfig?.allowOnly) {
     // Collect all paths that should be denied for writes (user-specified + mandatory)
-    const denyPathsForWrite = [
+    const denyPathsForWritePatterns = [
       ...(writeConfig.denyWithinAllow || []),
       ...(await linuxGetMandatoryDenyPaths(
         ripgrepConfig,
@@ -670,12 +727,25 @@ async function generateAllowOnlyFilesystemArgs(
       )),
     ]
 
-    // Build list of allowed write paths for checking
-    const allowedWritePaths = (writeConfig.allowOnly || []).map(
-      normalizePathForSandbox,
+    // Expand globs in denyWithinAllow paths
+    const expandedDenyWrite = await expandGlobPatterns(
+      denyPathsForWritePatterns,
+      ripgrepConfig,
+      mandatoryDenySearchDepth,
+      abortSignal,
     )
 
-    for (const pathPattern of denyPathsForWrite) {
+    // Build list of allowed write paths for checking (use expanded versions)
+    const allowedWritePaths = writeConfig?.allowOnly
+      ? await expandGlobPatterns(
+          writeConfig.allowOnly,
+          ripgrepConfig,
+          mandatoryDenySearchDepth,
+          abortSignal,
+        ).then(paths => paths.map(normalizePathForSandbox))
+      : []
+
+    for (const pathPattern of expandedDenyWrite) {
       const normalizedPath = normalizePathForSandbox(pathPattern)
 
       // Skip /dev/* paths since --dev /dev already handles them
@@ -708,7 +778,15 @@ async function generateAllowOnlyFilesystemArgs(
   }
 
   // Step 3: Hide sensitive paths within allowed paths (denyWithinAllow, e.g., .env files)
-  for (const pathPattern of denyWithinAllow) {
+  // Expand globs in denyWithinAllow for read restrictions
+  const expandedDenyWithinAllow = await expandGlobPatterns(
+    denyWithinAllow,
+    ripgrepConfig,
+    mandatoryDenySearchDepth,
+    abortSignal,
+  )
+
+  for (const pathPattern of expandedDenyWithinAllow) {
     const normalizedPath = normalizePathForSandbox(pathPattern)
 
     if (!fs.existsSync(normalizedPath)) {

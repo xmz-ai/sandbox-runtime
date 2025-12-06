@@ -38,23 +38,21 @@ export interface MacOSSandboxParams {
 }
 
 /**
- * Get mandatory deny patterns as glob patterns (no filesystem scanning).
- * macOS sandbox profile supports regex/glob matching directly via globToRegex().
+ * Get mandatory deny patterns (macOS only).
  *
- * Note: DANGEROUS_FILES and DANGEROUS_DIRECTORIES protection removed - users can now
- * configure these via denyWrite if needed.
+ * NOTE: This function previously protected git hooks config and other
+ * sensitive files automatically. As of the latest changes all automatic file
+ * protection has been removed to give users full control.
+ *
+ * Users should use denyWrite configuration with glob pattern support to protect
+ * sensitive files if needed. macOS supports glob patterns in denyWrite configuration.
+ *
+ * This function is kept for backward compatibility but now returns an empty array.
+ * It may be removed entirely in a future version.
  */
 export function macGetMandatoryDenyPatterns(): string[] {
-  const cwd = process.cwd()
-  const denyPaths: string[] = []
-
-  // Git hooks and config - block these specifically within .git
-  denyPaths.push(path.resolve(cwd, '.git/hooks'))
-  denyPaths.push(path.resolve(cwd, '.git/config'))
-  denyPaths.push('**/.git/hooks/**')
-  denyPaths.push('**/.git/config')
-
-  return [...new Set(denyPaths)]
+  // All automatic file protection removed - users have full control via denyWrite
+  return []
 }
 
 export interface SandboxViolationEvent {
