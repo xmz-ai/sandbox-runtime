@@ -234,6 +234,8 @@ export class SandboxManager {
           allowPty: this.config.allowPty,
           binShell,
           envVars,
+          tmpDir: this.config.tmpDir,
+          noProxyAddresses: networkConfig?.noProxyAddresses,
         })
 
       case 'linux':
@@ -262,6 +264,8 @@ export class SandboxManager {
           mandatoryDenySearchDepth: this.getMandatoryDenySearchDepth(),
           abortSignal,
           envVars,
+          tmpDir: this.config.tmpDir,
+          noProxyAddresses: networkConfig?.noProxyAddresses,
         })
 
       default:

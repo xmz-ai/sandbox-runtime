@@ -8,8 +8,6 @@ import {
   encodeSandboxedCommand,
   decodeSandboxedCommand,
   containsGlobChars,
-  DANGEROUS_FILES,
-  getDangerousDirectories,
   RESERVED_ENV_VARS,
 } from './sandbox-utils.js'
 import type {
@@ -33,35 +31,28 @@ export interface MacOSSandboxParams {
   binShell?: string
   /** Custom environment variables to set in the sandbox */
   envVars?: Array<{ name: string; value: string }>
+  /** Custom temporary directory path */
+  tmpDir?: string
+  /** Additional NO_PROXY addresses */
+  noProxyAddresses?: string[]
 }
 
 /**
- * Get mandatory deny patterns as glob patterns (no filesystem scanning).
- * macOS sandbox profile supports regex/glob matching directly via globToRegex().
+ * Get mandatory deny patterns (macOS only).
+ *
+ * NOTE: This function previously protected git hooks config and other
+ * sensitive files automatically. As of the latest changes all automatic file
+ * protection has been removed to give users full control.
+ *
+ * Users should use denyWrite configuration with glob pattern support to protect
+ * sensitive files if needed. macOS supports glob patterns in denyWrite configuration.
+ *
+ * This function is kept for backward compatibility but now returns an empty array.
+ * It may be removed entirely in a future version.
  */
 export function macGetMandatoryDenyPatterns(): string[] {
-  const cwd = process.cwd()
-  const denyPaths: string[] = []
-
-  // Dangerous files - static paths in CWD + glob patterns for subtree
-  for (const fileName of DANGEROUS_FILES) {
-    denyPaths.push(path.resolve(cwd, fileName))
-    denyPaths.push(`**/${fileName}`)
-  }
-
-  // Dangerous directories
-  for (const dirName of getDangerousDirectories()) {
-    denyPaths.push(path.resolve(cwd, dirName))
-    denyPaths.push(`**/${dirName}/**`)
-  }
-
-  // Git hooks and config - block these specifically within .git
-  denyPaths.push(path.resolve(cwd, '.git/hooks'))
-  denyPaths.push(path.resolve(cwd, '.git/config'))
-  denyPaths.push('**/.git/hooks/**')
-  denyPaths.push('**/.git/config')
-
-  return [...new Set(denyPaths)]
+  // All automatic file protection removed - users have full control via denyWrite
+  return []
 }
 
 export interface SandboxViolationEvent {
@@ -697,7 +688,10 @@ export function wrapCommandWithSandboxMacOS(
   })
 
   // Generate proxy environment variables using shared utility
-  const proxyEnvVars = generateProxyEnvVars(httpProxyPort, socksProxyPort)
+  const proxyEnvVars = generateProxyEnvVars(httpProxyPort, socksProxyPort, {
+    tmpDir: params.tmpDir,
+    noProxyAddresses: params.noProxyAddresses,
+  })
 
   // Add custom environment variables (with reserved var filtering)
   const customEnvVars: string[] = []
