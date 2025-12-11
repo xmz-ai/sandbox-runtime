@@ -240,7 +240,7 @@ export function hasLinuxSandboxDependenciesSync(
  *    - SOCKS listener on port 1080 -> SOCKS Unix socket -> host SOCKS5 proxy
  *
  * 3. Configure environment:
- *    - HTTP_PROXY=http://localhost:3128 for HTTP/HTTPS tools
+ *    - HTTP_PROXY=http://127.0.0.1:3128 for HTTP/HTTPS tools
  *    - GIT_SSH_COMMAND with socat for SSH through SOCKS5
  *
  * LIMITATION: Unlike macOS sandbox which can enforce domain-based allowlists at the kernel level,
@@ -261,7 +261,7 @@ export async function initializeLinuxNetworkBridge(
   // Start HTTP bridge
   const httpSocatArgs = [
     `UNIX-LISTEN:${httpSocketPath},fork,reuseaddr`,
-    `TCP:localhost:${httpProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
+    `TCP:127.0.0.1:${httpProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
   ]
 
   logForDebugging(`Starting HTTP bridge: socat ${httpSocatArgs.join(' ')}`)
@@ -288,7 +288,7 @@ export async function initializeLinuxNetworkBridge(
   // Start SOCKS bridge
   const socksSocatArgs = [
     `UNIX-LISTEN:${socksSocketPath},fork,reuseaddr`,
-    `TCP:localhost:${socksProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
+    `TCP:127.0.0.1:${socksProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
   ]
 
   logForDebugging(`Starting SOCKS bridge: socat ${socksSocatArgs.join(' ')}`)

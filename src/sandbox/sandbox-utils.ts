@@ -166,18 +166,18 @@ export function generateProxyEnvVars(
   envVars.push(`GLOBAL_AGENT_NO_PROXY=${noProxyAddresses}`)
 
   if (httpProxyPort) {
-    envVars.push(`HTTP_PROXY=http://localhost:${httpProxyPort}`)
-    envVars.push(`HTTPS_PROXY=http://localhost:${httpProxyPort}`)
+    envVars.push(`HTTP_PROXY=http://127.0.0.1:${httpProxyPort}`)
+    envVars.push(`HTTPS_PROXY=http://127.0.0.1:${httpProxyPort}`)
     // Lowercase versions for compatibility with some tools
-    envVars.push(`http_proxy=http://localhost:${httpProxyPort}`)
-    envVars.push(`https_proxy=http://localhost:${httpProxyPort}`)
-    envVars.push(`GLOBAL_AGENT_HTTP_PROXY=http://localhost:${httpProxyPort}`)
+    envVars.push(`http_proxy=http://127.0.0.1:${httpProxyPort}`)
+    envVars.push(`https_proxy=http://127.0.0.1:${httpProxyPort}`)
+    envVars.push(`GLOBAL_AGENT_HTTP_PROXY=http://127.0.0.1:${httpProxyPort}`)
   }
 
   if (socksProxyPort) {
     // Use socks5h:// for proper DNS resolution through proxy
-    envVars.push(`ALL_PROXY=socks5h://localhost:${socksProxyPort}`)
-    envVars.push(`all_proxy=socks5h://localhost:${socksProxyPort}`)
+    envVars.push(`ALL_PROXY=socks5h://127.0.0.1:${socksProxyPort}`)
+    envVars.push(`all_proxy=socks5h://127.0.0.1:${socksProxyPort}`)
 
     // Configure Git to use SSH through SOCKS proxy (platform-aware)
     if (getPlatform() === 'macos') {
@@ -188,11 +188,11 @@ export function generateProxyEnvVars(
     }
 
     // FTP proxy support (use socks5h for DNS resolution through proxy)
-    envVars.push(`FTP_PROXY=socks5h://localhost:${socksProxyPort}`)
-    envVars.push(`ftp_proxy=socks5h://localhost:${socksProxyPort}`)
+    envVars.push(`FTP_PROXY=socks5h://127.0.0.1:${socksProxyPort}`)
+    envVars.push(`ftp_proxy=socks5h://127.0.0.1:${socksProxyPort}`)
 
     // rsync proxy support
-    envVars.push(`RSYNC_PROXY=localhost:${socksProxyPort}`)
+    envVars.push(`RSYNC_PROXY=127.0.0.1:${socksProxyPort}`)
 
     // Database tools NOTE: Most database clients don't have built-in proxy support
     // You typically need to use SSH tunneling or a SOCKS wrapper like tsocks/proxychains
@@ -200,10 +200,10 @@ export function generateProxyEnvVars(
     // Docker CLI uses HTTP for the API
     // This makes Docker use the HTTP proxy for registry operations
     envVars.push(
-      `DOCKER_HTTP_PROXY=http://localhost:${httpProxyPort || socksProxyPort}`,
+      `DOCKER_HTTP_PROXY=http://127.0.0.1:${httpProxyPort || socksProxyPort}`,
     )
     envVars.push(
-      `DOCKER_HTTPS_PROXY=http://localhost:${httpProxyPort || socksProxyPort}`,
+      `DOCKER_HTTPS_PROXY=http://127.0.0.1:${httpProxyPort || socksProxyPort}`,
     )
 
     // Kubernetes kubectl - uses standard HTTPS_PROXY
@@ -227,8 +227,8 @@ export function generateProxyEnvVars(
     // Terraform respects HTTP_PROXY/HTTPS_PROXY which we already set above
 
     // gRPC-based tools - use standard proxy vars
-    envVars.push(`GRPC_PROXY=socks5h://localhost:${socksProxyPort}`)
-    envVars.push(`grpc_proxy=socks5h://localhost:${socksProxyPort}`)
+    envVars.push(`GRPC_PROXY=socks5h://127.0.0.1:${socksProxyPort}`)
+    envVars.push(`grpc_proxy=socks5h://127.0.0.1:${socksProxyPort}`)
   }
 
   // WARNING: Do not set HTTP_PROXY/HTTPS_PROXY to SOCKS URLs when only SOCKS proxy is available
