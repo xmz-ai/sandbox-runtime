@@ -9,6 +9,7 @@ import {
   EnvConfigSchema,
 } from './sandbox/sandbox-config.js'
 import { spawn } from 'child_process'
+import { createRequire } from 'module'
 import { logForDebugging } from './utils/debug.js'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -30,6 +31,25 @@ const SandboxRuntimeConfigSchema = z.object({
 })
 
 type SandboxRuntimeConfig = z.infer<typeof SandboxRuntimeConfigSchema>
+
+const require = createRequire(import.meta.url)
+const packageVersion = (() => {
+  try {
+    const { version } = require('../package.json') as { version?: string }
+    if (version) {
+      return version
+    }
+  } catch {
+    // ignore failures and fall back to default below
+  }
+
+  const envVersion = process.env.npm_package_version
+  if (envVersion) {
+    return envVersion
+  }
+
+  return '1.0.0'
+})()
 
 /**
  * Load and validate sandbox configuration from a file
@@ -105,7 +125,7 @@ async function main(): Promise<void> {
     .description(
       'Run commands in a sandbox with network and filesystem restrictions',
     )
-    .version(process.env.npm_package_version || '1.0.0')
+    .version(packageVersion)
 
   program
     .argument('<command...>', 'command to run in the sandbox')
