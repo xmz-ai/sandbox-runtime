@@ -57,6 +57,8 @@ export interface LinuxSandboxParams {
   tmpDir?: string
   /** Additional NO_PROXY addresses */
   noProxyAddresses?: string[]
+  /** Allow access to system network metadata (/etc/resolv.conf, /etc/hosts, /etc/nsswitch.conf) */
+  allowNetworkMetadata?: boolean
 }
 
 /** Default max depth for searching dangerous files */
@@ -449,6 +451,7 @@ async function generateDenyOnlyFilesystemArgs(
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   abortSignal?: AbortSignal,
+  allowNetworkMetadata?: boolean,
 ): Promise<string[]> {
   const args: string[] = []
 
@@ -548,6 +551,23 @@ async function generateDenyOnlyFilesystemArgs(
     args.push('--bind', '/', '/')
   }
 
+  // Hide network metadata files if allowNetworkMetadata is disabled
+  if (allowNetworkMetadata === false) {
+    const networkMetadataFiles = [
+      '/etc/resolv.conf',
+      '/etc/hosts',
+      '/etc/nsswitch.conf',
+    ]
+    for (const file of networkMetadataFiles) {
+      if (fs.existsSync(file)) {
+        args.push('--ro-bind', '/dev/null', file)
+        logForDebugging(
+          `[Sandbox Linux] Blocked network metadata file: ${file}`,
+        )
+      }
+    }
+  }
+
   // Handle read restrictions by mounting tmpfs over denied paths
   const readDenyPatterns = [...denyPaths]
 
@@ -598,6 +618,7 @@ async function generateAllowOnlyFilesystemArgs(
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   abortSignal?: AbortSignal,
+  allowNetworkMetadata?: boolean,
 ): Promise<string[]> {
   const args: string[] = []
 
@@ -643,6 +664,21 @@ async function generateAllowOnlyFilesystemArgs(
       logForDebugging(
         `[Sandbox Linux] Bound seccomp filter directory: ${filterDir}`,
       )
+    }
+  }
+
+  // Bind network metadata files if allowNetworkMetadata is enabled (default: true)
+  if (allowNetworkMetadata) {
+    const networkMetadataFiles = [
+      '/etc/resolv.conf', // DNS servers
+      '/etc/hosts', // Local hostname resolution
+      '/etc/nsswitch.conf', // Name Service Switch configuration
+    ]
+    for (const file of networkMetadataFiles) {
+      if (fs.existsSync(file)) {
+        args.push('--ro-bind', file, file)
+        logForDebugging(`[Sandbox Linux] Bound network metadata file: ${file}`)
+      }
     }
   }
 
@@ -820,6 +856,7 @@ async function generateFilesystemArgs(
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   abortSignal?: AbortSignal,
+  allowNetworkMetadata?: boolean,
 ): Promise<string[]> {
   // Merge tmpDir into writeConfig if present
   // This ensures tmpDir is automatically added to allowed write paths
@@ -846,6 +883,7 @@ async function generateFilesystemArgs(
       ripgrepConfig,
       mandatoryDenySearchDepth,
       abortSignal,
+      allowNetworkMetadata,
     )
   } else if (readConfig?.mode === 'allow-only') {
     // Use allow-only implementation (new logic)
@@ -857,6 +895,7 @@ async function generateFilesystemArgs(
       ripgrepConfig,
       mandatoryDenySearchDepth,
       abortSignal,
+      allowNetworkMetadata,
     )
   } else {
     // No read restrictions: mount entire / (respecting write restrictions if any)
@@ -1120,6 +1159,7 @@ export async function wrapCommandWithSandboxLinux(
       ripgrepConfig,
       mandatoryDenySearchDepth,
       abortSignal,
+      params.allowNetworkMetadata,
     )
     bwrapArgs.push(...fsArgs)
 

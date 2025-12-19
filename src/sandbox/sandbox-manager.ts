@@ -236,6 +236,7 @@ export class SandboxManager {
           envVars,
           tmpDir: this.config.tmpDir,
           noProxyAddresses: networkConfig?.noProxyAddresses,
+          allowNetworkMetadata: networkConfig?.allowNetworkMetadata,
         })
 
       case 'linux':
@@ -266,6 +267,7 @@ export class SandboxManager {
           envVars,
           tmpDir: this.config.tmpDir,
           noProxyAddresses: networkConfig?.noProxyAddresses,
+          allowNetworkMetadata: networkConfig?.allowNetworkMetadata,
         })
 
       default:

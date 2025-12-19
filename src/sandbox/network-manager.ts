@@ -32,6 +32,7 @@ export interface NetworkConfig {
   httpProxyPort?: number
   socksProxyPort?: number
   noProxyAddresses?: string[]
+  allowNetworkMetadata?: boolean
 }
 
 /**
