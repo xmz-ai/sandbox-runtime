@@ -9,6 +9,7 @@ import {
   decodeSandboxedCommand,
   containsGlobChars,
   RESERVED_ENV_VARS,
+  ensureTmpDir,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -279,6 +280,7 @@ function generateReadRules(
  */
 function generateWriteRules(
   config: FsWriteRestrictionConfig | undefined,
+  customTmpDir: string | undefined,
   logTag: string,
 ): string[] {
   if (!config) {
@@ -288,9 +290,21 @@ function generateWriteRules(
   const rules: string[] = []
 
   // Automatically allow TMPDIR parent on macOS when write restrictions are enabled
+  // This is for the system's TMPDIR (usually /var/folders/XX/YYY/T/)
   const tmpdirParents = getTmpdirParentIfMacOSPattern()
   for (const tmpdirParent of tmpdirParents) {
     const normalizedPath = normalizePathForSandbox(tmpdirParent)
+    rules.push(
+      `(allow file-write*`,
+      `  (subpath ${escapePath(normalizedPath)})`,
+      `  (with message "${logTag}"))`,
+    )
+  }
+
+  // Automatically allow custom TMPDIR (e.g., /tmp/xmz-ai-sandbox) when specified
+  // This is for the user-specified or default tmpDir used by the sandbox
+  if (customTmpDir) {
+    const normalizedPath = normalizePathForSandbox(customTmpDir)
     rules.push(
       `(allow file-write*`,
       `  (subpath ${escapePath(normalizedPath)})`,
@@ -359,6 +373,7 @@ function generateWriteRules(
 function generateSandboxProfile({
   readConfig,
   writeConfig,
+  tmpDir,
   httpProxyPort,
   socksProxyPort,
   needsNetworkRestriction,
@@ -370,6 +385,7 @@ function generateSandboxProfile({
 }: {
   readConfig: FsReadRestrictionConfig | undefined
   writeConfig: FsWriteRestrictionConfig | undefined
+  tmpDir?: string
   httpProxyPort?: number
   socksProxyPort?: number
   needsNetworkRestriction: boolean
@@ -582,7 +598,7 @@ function generateSandboxProfile({
 
   // Write rules
   profile.push('; File write')
-  profile.push(...generateWriteRules(writeConfig, logTag))
+  profile.push(...generateWriteRules(writeConfig, tmpDir, logTag))
 
   // Pseudo-terminal (pty) support for tmux and other terminal multiplexers
   if (allowPty) {
@@ -672,11 +688,15 @@ export function wrapCommandWithSandboxMacOS(
     return command
   }
 
+  // Determine the final tmpDir value upfront and ensure it exists
+  const tmpDir = ensureTmpDir(params.tmpDir, 'Sandbox macOS')
+
   const logTag = generateLogTag(command)
 
   const profile = generateSandboxProfile({
     readConfig,
     writeConfig,
+    tmpDir,
     httpProxyPort,
     socksProxyPort,
     needsNetworkRestriction,
@@ -689,7 +709,7 @@ export function wrapCommandWithSandboxMacOS(
 
   // Generate proxy environment variables using shared utility
   const proxyEnvVars = generateProxyEnvVars(httpProxyPort, socksProxyPort, {
-    tmpDir: params.tmpDir,
+    tmpDir: tmpDir,
     noProxyAddresses: params.noProxyAddresses,
   })
 

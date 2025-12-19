@@ -12,6 +12,7 @@ import {
   normalizePathForSandbox,
   RESERVED_ENV_VARS,
   containsGlobChars,
+  ensureTmpDir,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -814,17 +815,34 @@ async function generateAllowOnlyFilesystemArgs(
 async function generateFilesystemArgs(
   readConfig: FsReadRestrictionConfig | undefined,
   writeConfig: FsWriteRestrictionConfig | undefined,
+  tmpDir: string | undefined,
   seccompFilterPath?: string,
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   abortSignal?: AbortSignal,
 ): Promise<string[]> {
+  // Merge tmpDir into writeConfig if present
+  // This ensures tmpDir is automatically added to allowed write paths
+  let mergedWriteConfig = writeConfig
+  if (tmpDir && writeConfig) {
+    const allowOnly = writeConfig.allowOnly || []
+    if (!allowOnly.includes(tmpDir)) {
+      mergedWriteConfig = {
+        ...writeConfig,
+        allowOnly: [...allowOnly, tmpDir],
+      }
+      logForDebugging(
+        `[Sandbox Linux] Automatically added tmpDir to allowed write paths: ${tmpDir}`,
+      )
+    }
+  }
+
   // Dispatch to appropriate implementation based on read config mode
   if (readConfig?.mode === 'deny-only') {
     // Use deny-only implementation (original logic)
     return generateDenyOnlyFilesystemArgs(
       readConfig.denyPaths,
-      writeConfig,
+      mergedWriteConfig,
       ripgrepConfig,
       mandatoryDenySearchDepth,
       abortSignal,
@@ -834,7 +852,7 @@ async function generateFilesystemArgs(
     return generateAllowOnlyFilesystemArgs(
       readConfig.allowPaths,
       readConfig.denyWithinAllow,
-      writeConfig,
+      mergedWriteConfig,
       seccompFilterPath,
       ripgrepConfig,
       mandatoryDenySearchDepth,
@@ -843,11 +861,11 @@ async function generateFilesystemArgs(
   } else {
     // No read restrictions: mount entire / (respecting write restrictions if any)
     const args: string[] = []
-    if (writeConfig) {
+    if (mergedWriteConfig) {
       // Has write restrictions: mount / as read-only, then bind writable paths
       args.push('--ro-bind', '/', '/')
 
-      for (const pathPattern of writeConfig.allowOnly || []) {
+      for (const pathPattern of mergedWriteConfig.allowOnly || []) {
         const normalizedPath = normalizePathForSandbox(pathPattern)
 
         // Skip /dev/* paths since --dev /dev already handles them
@@ -961,6 +979,10 @@ export async function wrapCommandWithSandboxLinux(
     return command
   }
 
+  // Determine the final tmpDir value upfront and ensure it exists
+  // This ensures both generateProxyEnvVars and generateFilesystemArgs use the same value
+  const tmpDir = ensureTmpDir(params.tmpDir, 'Sandbox Linux')
+
   const bwrapArgs: string[] = []
   let seccompFilterPath: string | undefined = undefined
 
@@ -1034,7 +1056,7 @@ export async function wrapCommandWithSandboxLinux(
           3128, // Internal HTTP listener port
           1080, // Internal SOCKS listener port
           {
-            tmpDir: params.tmpDir,
+            tmpDir: tmpDir,
             noProxyAddresses: params.noProxyAddresses,
           },
         )
@@ -1093,6 +1115,7 @@ export async function wrapCommandWithSandboxLinux(
     const fsArgs = await generateFilesystemArgs(
       readConfig,
       writeConfig,
+      tmpDir,
       seccompFilterPath,
       ripgrepConfig,
       mandatoryDenySearchDepth,

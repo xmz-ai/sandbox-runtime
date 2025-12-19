@@ -130,7 +130,38 @@ export function normalizePathForSandbox(pathPattern: string): string {
 }
 
 /**
+ * Ensure temporary directory exists and return its path.
+ * Creates the directory if it doesn't exist.
+ *
+ * @param tmpDir Optional custom tmpDir path. If not provided, uses default '/tmp/xmz-ai-sandbox'
+ * @param platform Platform identifier for logging (e.g., 'Linux', 'macOS')
+ * @returns The final tmpDir path (either custom or default)
+ */
+export function ensureTmpDir(
+  tmpDir: string | undefined,
+  platform: string = 'Sandbox',
+): string {
+  const finalTmpDir = tmpDir || '/tmp/xmz-ai-sandbox'
+
+  try {
+    if (!fs.existsSync(finalTmpDir)) {
+      fs.mkdirSync(finalTmpDir, { recursive: true, mode: 0o755 })
+    }
+  } catch (error) {
+    console.warn(
+      `[${platform}] Failed to create temporary directory ${finalTmpDir}:`,
+      error,
+    )
+  }
+
+  return finalTmpDir
+}
+
+/**
  * Generate proxy environment variables for sandboxed processes
+ *
+ * NOTE: The tmpDir should be created by the caller before calling this function.
+ * This function only sets the TMPDIR environment variable, it doesn't create the directory.
  */
 export function generateProxyEnvVars(
   httpProxyPort?: number,
