@@ -138,6 +138,15 @@ export const NetworkConfigSchema = z.object({
         'These are added to the mandatory addresses (localhost, 127.0.0.1, ::1, *.local, .local, 169.254.0.0/16). ' +
         'Common use cases: private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), internal domains.',
     ),
+  allowNetworkMetadata: z
+    .boolean()
+    .optional()
+    .describe(
+      'Allow access to system network metadata and configuration. ' +
+        'macOS: Grants mach-lookup permissions for SystemConfiguration services (DNS, proxy info, network config). ' +
+        'Linux: Allows reading /etc/resolv.conf, /etc/hosts, and /etc/nsswitch.conf. ' +
+        'Default: true (undefined is treated as true) for backward compatibility. Set to false for maximum security in isolated environments.',
+    ),
 })
 
 /**

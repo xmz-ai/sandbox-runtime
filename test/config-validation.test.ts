@@ -355,4 +355,77 @@ describe('Config Validation', () => {
       }
     })
   })
+
+  describe('allowNetworkMetadata', () => {
+    test('should accept allowNetworkMetadata: true', () => {
+      const config = {
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+          allowNetworkMetadata: true,
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+    })
+
+    test('should accept allowNetworkMetadata: false', () => {
+      const config = {
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+          allowNetworkMetadata: false,
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+    })
+
+    test('should accept config without allowNetworkMetadata (backward compatibility)', () => {
+      const config = {
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(true)
+      // Undefined should be treated as true (default behavior)
+      if (result.success) {
+        expect(result.data.network.allowNetworkMetadata).toBeUndefined()
+      }
+    })
+
+    test('should reject non-boolean values for allowNetworkMetadata', () => {
+      const config = {
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+          allowNetworkMetadata: 'true', // Invalid: string instead of boolean
+        },
+        filesystem: {
+          denyRead: [],
+          allowWrite: [],
+          denyWrite: [],
+        },
+      }
+      const result = SandboxRuntimeConfigSchema.safeParse(config)
+      expect(result.success).toBe(false)
+    })
+  })
 })

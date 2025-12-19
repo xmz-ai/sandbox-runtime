@@ -36,6 +36,8 @@ export interface MacOSSandboxParams {
   tmpDir?: string
   /** Additional NO_PROXY addresses */
   noProxyAddresses?: string[]
+  /** Allow access to system network metadata (SystemConfiguration services) */
+  allowNetworkMetadata?: boolean
 }
 
 /**
@@ -381,6 +383,7 @@ function generateSandboxProfile({
   allowAllUnixSockets,
   allowLocalBinding,
   allowPty,
+  allowNetworkMetadata,
   logTag,
 }: {
   readConfig: FsReadRestrictionConfig | undefined
@@ -393,6 +396,7 @@ function generateSandboxProfile({
   allowAllUnixSockets?: boolean
   allowLocalBinding?: boolean
   allowPty?: boolean
+  allowNetworkMetadata?: boolean
   logTag: string
 }): string {
   const profile: string[] = [
@@ -429,6 +433,12 @@ function generateSandboxProfile({
     '  (global-name "com.apple.bsd.dirhelper")',
     '  (global-name "com.apple.securityd.xpc")',
     '  (global-name "com.apple.coreservices.launchservicesd")',
+    ...(allowNetworkMetadata !== false
+      ? [
+          '  (global-name "com.apple.SystemConfiguration.configd")',
+          '  (global-name "com.apple.SystemConfiguration.DNSConfiguration")',
+        ]
+      : []),
     ')',
     '',
     '; POSIX IPC - shared memory',
@@ -704,6 +714,7 @@ export function wrapCommandWithSandboxMacOS(
     allowAllUnixSockets,
     allowLocalBinding,
     allowPty,
+    allowNetworkMetadata: params.allowNetworkMetadata,
     logTag,
   })
 
